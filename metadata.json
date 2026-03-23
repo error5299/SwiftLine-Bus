@@ -1,0 +1,5 @@
+{
+  "name": "SwiftLine Bus Ticketing",
+  "description": "High-end, dedicated, single-operator bus ticketing and fleet management web application.",
+  "requestFramePermissions": ["geolocation"]
+}

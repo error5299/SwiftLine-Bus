@@ -1,0 +1,259 @@
+import React, { useState } from 'react';
+import { auth, db } from '../firebase';
+import { signInWithPopup, GoogleAuthProvider, signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { useLanguage } from '../hooks/useLanguage';
+import { motion, AnimatePresence } from 'motion/react';
+import { Bus, Mail, Lock, LogIn, Chrome, UserPlus, User } from 'lucide-react';
+
+interface LoginProps {
+  onSuccess: () => void;
+  defaultRole?: 'admin' | 'operator' | 'supervisor';
+}
+
+export const Login: React.FC<LoginProps> = ({ onSuccess, defaultRole }) => {
+  const { t } = useLanguage();
+  const [isLogin, setIsLogin] = useState(true);
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [customId, setCustomId] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [loginMethod, setLoginMethod] = useState<'email' | 'id'>('email');
+
+  const isStaffLogin = defaultRole === 'operator' || defaultRole === 'supervisor';
+
+  const handleGoogleLogin = async () => {
+    const provider = new GoogleAuthProvider();
+    try {
+      await signInWithPopup(auth, provider);
+      onSuccess();
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    try {
+      if (isLogin) {
+        if (loginMethod === 'email') {
+          await signInWithEmailAndPassword(auth, email, password);
+        } else {
+          // Custom ID login
+          const { collection, query, where, getDocs } = await import('firebase/firestore');
+          const { db } = await import('../firebase');
+          const q = query(collection(db, 'staff_credentials'), where('id', '==', customId), where('password', '==', password));
+          const snapshot = await getDocs(q);
+          if (snapshot.empty) {
+            throw new Error(t('আইডি বা পাসওয়ার্ড ভুল।', 'Invalid ID or password.'));
+          }
+          // For custom login, we need to sign in as a generic user or handle session manually
+          // This is insecure, but requested.
+          // We'll sign in as a placeholder user or just redirect.
+          // For now, let's assume we have a generic staff account for custom login.
+          localStorage.setItem('customStaffId', customId);
+          await signInWithEmailAndPassword(auth, 'staff@swiftline.com', 'password123');
+        }
+      } else {
+        if (isStaffLogin) {
+          const { doc, getDoc } = await import('firebase/firestore');
+          const { db } = await import('../firebase');
+          const staffDoc = await getDoc(doc(db, 'staff_emails', email));
+          if (!staffDoc.exists()) {
+            throw new Error(t('এই ইমেইলটি স্টাফ নিবন্ধনের জন্য অনুমোদিত নয়।', 'This email is not authorized for staff registration.'));
+          }
+          const staffData = staffDoc.data();
+          if (staffData.role !== defaultRole) {
+            throw new Error(t(`এই ইমেইলটি ${staffData.role} হিসেবে অনুমোদিত, ${defaultRole} হিসেবে নয়।`, `This email is authorized as ${staffData.role}, not ${defaultRole}.`));
+          }
+        }
+        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+        await updateProfile(userCredential.user, { displayName: name });
+        
+        // Ensure role is set in users collection
+        const { doc, setDoc } = await import('firebase/firestore');
+        const { db } = await import('../firebase');
+        
+        let role = defaultRole || 'passenger';
+        let profileId = null;
+        
+        if (isStaffLogin) {
+          const staffDoc = await getDoc(doc(db, 'staff_emails', email));
+          if (staffDoc.exists()) {
+            role = staffDoc.data().role;
+            profileId = staffDoc.data().profileId;
+          }
+        }
+
+        await setDoc(doc(db, 'users', userCredential.user.uid), {
+          email: userCredential.user.email,
+          role: role,
+          profileId: profileId,
+          createdAt: new Date().toISOString()
+        });
+      }
+      onSuccess();
+    } catch (err: any) {
+      console.error("Login error details:", err);
+      if (isLogin) {
+        setError(t(`ইমেইল বা পাসওয়ার্ড ভুল: ${err.message}`, `Invalid email or password: ${err.message}`));
+      } else {
+        setError(err.message);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="max-w-md mx-auto py-12 px-4">
+      <motion.div 
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="card-premium space-y-8"
+      >
+        <div className="text-center space-y-2">
+          <div className="bg-primary w-16 h-16 rounded-2xl flex items-center justify-center mx-auto shadow-xl shadow-primary/20">
+            <Bus className="text-white" size={32} />
+          </div>
+          <h2 className="text-3xl font-black text-primary tracking-tighter">
+            {defaultRole === 'operator' ? t('অপারেটর লগইন', 'Operator Login') : 
+             defaultRole === 'supervisor' ? t('স্টাফ লগইন', 'Staff Login') :
+             isLogin ? t('লগইন করুন', 'Login to SwiftLine') : t('নিবন্ধন করুন', 'Join SwiftLine')}
+          </h2>
+          <p className="text-slate-500 font-medium">
+            {isLogin ? t('আপনার অ্যাকাউন্ট অ্যাক্সেস করুন', 'Access your account') : t('নতুন অ্যাকাউন্ট তৈরি করুন', 'Create a new account')}
+          </p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-5">
+          <AnimatePresence mode="wait">
+            {!isLogin && (
+              <motion.div 
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                className="space-y-2"
+              >
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">{t('নাম', 'Full Name')}</label>
+                <div className="relative group">
+                  <User className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-accent transition-colors" size={20} />
+                  <input 
+                    required
+                    type="text" 
+                    placeholder="John Doe"
+                    className="input-field pl-12"
+                    value={name}
+                    onChange={e => setName(e.target.value)}
+                  />
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <div className="flex gap-4 mb-4">
+            <button 
+              type="button"
+              onClick={() => setLoginMethod('email')}
+              className={`flex-1 py-3 rounded-xl font-bold text-sm ${loginMethod === 'email' ? 'bg-primary text-white' : 'bg-slate-100 text-slate-500'}`}
+            >
+              {t('ইমেইল', 'Email')}
+            </button>
+            <button 
+              type="button"
+              onClick={() => setLoginMethod('id')}
+              className={`flex-1 py-3 rounded-xl font-bold text-sm ${loginMethod === 'id' ? 'bg-primary text-white' : 'bg-slate-100 text-slate-500'}`}
+            >
+              {t('আইডি', 'Custom ID')}
+            </button>
+          </div>
+
+          {loginMethod === 'email' ? (
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">{t('ইমেইল', 'Email Address')}</label>
+              <div className="relative group">
+                <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-accent transition-colors" size={20} />
+                <input 
+                  required
+                  type="email" 
+                  placeholder="example@mail.com"
+                  className="input-field pl-12"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">{t('আইডি', 'Custom ID')}</label>
+              <div className="relative group">
+                <User className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-accent transition-colors" size={20} />
+                <input 
+                  required
+                  type="text" 
+                  placeholder="bt132023"
+                  className="input-field pl-12"
+                  value={customId}
+                  onChange={e => setCustomId(e.target.value)}
+                />
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">{t('পাসওয়ার্ড', 'Password')}</label>
+            <div className="relative group">
+              <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-accent transition-colors" size={20} />
+              <input 
+                required
+                type="password" 
+                placeholder="••••••••"
+                className="input-field pl-12"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+              />
+            </div>
+          </div>
+
+          {error && <p className="text-red-500 text-xs font-bold text-center">{error}</p>}
+
+          <button 
+            type="submit" 
+            disabled={loading}
+            className="btn-primary !py-5 w-full rounded-2xl flex items-center justify-center gap-3 shadow-xl shadow-primary/20 disabled:opacity-50"
+          >
+            {loading ? <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin" /> : (isLogin ? <LogIn size={20} /> : <UserPlus size={20} />)}
+            <span className="text-lg">{isLogin ? t('লগইন', 'Login') : t('নিবন্ধন', 'Sign Up')}</span>
+          </button>
+        </form>
+
+        <div className="relative py-4">
+          <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-100"></div></div>
+          <div className="relative flex justify-center text-xs uppercase"><span className="bg-white px-4 text-slate-400 font-bold tracking-widest">{t('অথবা', 'Or Continue With')}</span></div>
+        </div>
+
+        <button 
+          onClick={handleGoogleLogin}
+          className="w-full py-4 bg-white border border-slate-200 rounded-2xl font-bold text-slate-600 hover:bg-slate-50 transition-all flex items-center justify-center gap-3 shadow-sm"
+        >
+          <Chrome size={20} className="text-red-500" />
+          <span>Google {t('দিয়ে লগইন', 'Login with Google')}</span>
+        </button>
+
+        <p className="text-center text-sm text-slate-500">
+          {isLogin ? t('অ্যাকাউন্ট নেই?', "Don't have an account?") : t('ইতিমধ্যে অ্যাকাউন্ট আছে?', "Already have an account?")} 
+          <button 
+            onClick={() => setIsLogin(!isLogin)}
+            className="text-accent font-bold hover:underline ml-1"
+          >
+            {isLogin ? t('নিবন্ধন করুন', 'Sign Up') : t('লগইন করুন', 'Login')}
+          </button>
+        </p>
+      </motion.div>
+    </div>
+  );
+};

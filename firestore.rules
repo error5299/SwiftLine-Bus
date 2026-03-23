@@ -1,0 +1,157 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: counters
+    // Fields: name (string), location (string), walletBalance (number)
+    //
+    // Collection: operators
+    // Fields: userId (string), password (string), counterId (string), role (string)
+    //
+    // Collection: walletTransactions
+    // Fields: counterId (string), amount (number), type (string), timestamp (string), description (string)
+    //
+    // Collection: routes
+    // Fields: name (string), stops (list of maps)
+    //
+    // Collection: buses
+    // Fields: regNo (string), model (string), isAC (bool), capacity (number)
+    //
+    // Collection: crew
+    // Fields: name (string), role (string), nid (string), phone (string)
+    //
+    // Collection: passengers
+    // Fields: name (string), phone (string), email (string), gender (string), isBlacklisted (bool)
+    //
+    // Collection: trips
+    // Fields: routeId (string), busId (string), departureTime (string), status (string), currentStopIndex (number), stopLogs (list), fare (number)
+    //
+    // Collection: tripCounterTimes
+    // Fields: tripId (string), counterId (string), arrivalTime (string), departureTime (string), isReportingCounter (bool)
+    //
+    // Collection: bookings
+    // Fields: tripId (string), passengerId (string), seats (list), gender (string), totalFare (number), status (string)
+    //
+    // Collection: seatLocks
+    // Fields: tripId (string), seatNumber (string), lockedBy (string), expiresAt (string)
+    //
+    // Collection: users
+    // Fields: email (string), role (string), counterId (string)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        (request.auth.token.email == "belayeth923@gmail.com" && request.auth.token.email_verified == true) || 
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      );
+    }
+
+    function isOperator() {
+      return isAuthenticated() && (
+        isAdmin() ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'operator')
+      );
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    // Admins (Custom Login)
+    match /admins/{adminId} {
+      allow read, write: if true;
+    }
+
+    // Allow everything for Admin
+    match /{path=**} {
+      allow read, write: if isAdmin();
+    }
+
+    // Users (RBAC)
+    match /users/{userId} {
+      allow read: if true;
+      allow write: if isAdmin() || isOwner(userId);
+    }
+
+    // Counters
+    match /counters/{counterId} {
+      allow read: if true;
+      allow write: if isAdmin() || true; // Loosened for demo
+    }
+
+    // Operators
+    match /operators/{operatorId} {
+      allow read: if true;
+      allow write: if isAdmin() || true; // Loosened for demo
+    }
+
+    // Wallet Transactions
+    match /walletTransactions/{transactionId} {
+      allow read: if true;
+      allow create: if true;
+      allow update, delete: if isAdmin() || true; // Loosened for demo
+    }
+
+    // Routes, Buses, Crew
+    match /routes/{id} { 
+      allow read: if true;
+      allow write: if isAdmin() || true;
+    }
+    match /buses/{id} { 
+      allow read: if true;
+      allow write: if isAdmin() || true;
+    }
+    match /crew/{id} { 
+      allow read: if true;
+      allow write: if isAdmin() || true;
+    }
+
+    // Passengers
+    match /passengers/{passengerId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Trips
+    match /trips/{tripId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Bookings
+    match /bookings/{bookingId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Seat Locks
+    match /seatLocks/{lockId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Trip Counter Times
+    match /tripCounterTimes/{timeId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Default deny
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}

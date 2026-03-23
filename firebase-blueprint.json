@@ -1,0 +1,214 @@
+{
+  "entities": {
+    "Counter": {
+      "title": "Counter",
+      "description": "Physical bus counter locations.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Name of the counter (e.g., Dhaka, Savar)." },
+        "location": { "type": "string", "description": "Physical address or coordinates." },
+        "walletBalance": { "type": "number", "description": "Current prepaid balance." },
+        "allowedDestinationCounters": { "type": "array", "items": { "type": "string" }, "description": "List of counter IDs this counter can sell tickets to." },
+        "status": { "type": "string", "enum": ["active", "inactive"] }
+      },
+      "required": ["name", "walletBalance", "status"]
+    },
+    "Operator": {
+      "title": "Operator",
+      "description": "Counter operator user accounts.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Unique login ID." },
+        "password": { "type": "string", "description": "Login password." },
+        "counterId": { "type": "string", "description": "ID of the assigned counter." },
+        "role": { "type": "string", "enum": ["operator", "admin", "supervisor"] }
+      },
+      "required": ["userId", "password", "counterId", "role"]
+    },
+    "WalletTransaction": {
+      "title": "Wallet Transaction",
+      "description": "Logs of wallet recharges and booking deductions.",
+      "type": "object",
+      "properties": {
+        "counterId": { "type": "string" },
+        "amount": { "type": "number" },
+        "type": { "type": "string", "enum": ["topup", "booking"] },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "description": { "type": "string" }
+      },
+      "required": ["counterId", "amount", "type", "timestamp"]
+    },
+    "Route": {
+      "title": "Route",
+      "description": "Bus routes defined by a sequence of counters.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "stops": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "counterId": { "type": "string" },
+              "distance": { "type": "number" },
+              "travelTime": { "type": "number", "description": "Minutes from previous stop." }
+            }
+          }
+        },
+        "orderedCounterList": { "type": "array", "items": { "type": "string" }, "description": "Ordered list of counter IDs in the route." }
+      },
+      "required": ["name", "stops", "orderedCounterList"]
+    },
+    "Bus": {
+      "title": "Bus",
+      "description": "Fleet vehicles.",
+      "type": "object",
+      "properties": {
+        "regNo": { "type": "string" },
+        "model": { "type": "string" },
+        "isAC": { "type": "boolean" },
+        "capacity": { "type": "number" },
+        "isWiFi": { "type": "boolean" },
+        "isFood": { "type": "boolean" },
+        "isCharging": { "type": "boolean" }
+      },
+      "required": ["regNo", "capacity", "isAC"]
+    },
+    "Crew": {
+      "title": "Crew",
+      "description": "Drivers, supervisors, and helpers.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "role": { "type": "string", "enum": ["driver", "supervisor", "helper"] },
+        "nid": { "type": "string" },
+        "photo": { "type": "string" },
+        "phone": { "type": "string" },
+        "license": { "type": "string" },
+        "assignedTripId": { "type": "string" }
+      },
+      "required": ["name", "role", "nid", "phone"]
+    },
+    "Passenger": {
+      "title": "Passenger",
+      "description": "Central passenger database.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "gender": { "type": "string", "enum": ["male", "female"] },
+        "isBlacklisted": { "type": "boolean" }
+      },
+      "required": ["name", "phone"]
+    },
+    "Trip": {
+      "title": "Trip",
+      "description": "Scheduled bus trips.",
+      "type": "object",
+      "properties": {
+        "coachNumber": { "type": "string", "description": "Unique coach number for tracking." },
+        "routeId": { "type": "string" },
+        "busId": { "type": "string" },
+        "crewIds": { "type": "array", "items": { "type": "string" } },
+        "date": { "type": "string", "format": "date" },
+        "baseDepartureTime": { "type": "string", "description": "Initial departure time from first counter." },
+        "departureTime": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["scheduled", "departed", "arrived", "cancelled"] },
+        "currentStopIndex": { "type": "number" },
+        "fare": { "type": "number", "description": "Base fare for the trip." },
+        "stopLogs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "counterId": { "type": "string" },
+              "timestamp": { "type": "string", "format": "date-time" }
+            }
+          }
+        }
+      },
+      "required": ["routeId", "busId", "date", "baseDepartureTime", "status"]
+    },
+    "TripCounterTime": {
+      "title": "Trip Counter Time",
+      "description": "Specific arrival and departure times for each counter in a trip.",
+      "type": "object",
+      "properties": {
+        "tripId": { "type": "string" },
+        "counterId": { "type": "string" },
+        "arrivalTime": { "type": "string" },
+        "departureTime": { "type": "string" }
+      },
+      "required": ["tripId", "counterId", "departureTime"]
+    },
+    "Booking": {
+      "title": "Booking",
+      "description": "Ticket bookings.",
+      "type": "object",
+      "properties": {
+        "tripId": { "type": "string" },
+        "passengerId": { "type": "string" },
+        "seats": { "type": "array", "items": { "type": "string" } },
+        "gender": { "type": "string", "enum": ["male", "female"] },
+        "boardingStopId": { "type": "string" },
+        "droppingStopId": { "type": "string" },
+        "totalFare": { "type": "number" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["confirmed", "cancelled"] },
+        "bookedByCounterId": { "type": "string" }
+      },
+      "required": ["tripId", "passengerId", "seats", "totalFare", "status"]
+    },
+    "SeatLock": {
+      "title": "Seat Lock",
+      "description": "Temporary seat locks for booking.",
+      "type": "object",
+      "properties": {
+        "tripId": { "type": "string" },
+        "seatNumber": { "type": "string" },
+        "lockedBy": { "type": "string" },
+        "expiresAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["tripId", "seatNumber", "lockedBy", "expiresAt"]
+    },
+    "User": {
+      "title": "User",
+      "description": "App users for RBAC.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "operator", "supervisor"] },
+        "counterId": { "type": "string", "description": "Optional counter ID for operators" }
+      },
+      "required": ["email", "role"]
+    },
+    "Admin": {
+      "title": "Admin",
+      "description": "Admin users for custom login.",
+      "type": "object",
+      "properties": {
+        "customId": { "type": "string" },
+        "password": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string" }
+      },
+      "required": ["customId", "password", "name", "role"]
+    }
+  },
+  "firestore": {
+    "/counters/{counterId}": { "schema": "Counter", "description": "Counters collection" },
+    "/operators/{operatorId}": { "schema": "Operator", "description": "Operators collection" },
+    "/walletTransactions/{transactionId}": { "schema": "WalletTransaction", "description": "Wallet transactions" },
+    "/routes/{routeId}": { "schema": "Route", "description": "Routes collection" },
+    "/buses/{busId}": { "schema": "Bus", "description": "Buses collection" },
+    "/crew/{crewId}": { "schema": "Crew", "description": "Crew collection" },
+    "/passengers/{passengerId}": { "schema": "Passenger", "description": "Passengers collection" },
+    "/trips/{tripId}": { "schema": "Trip", "description": "Trips collection" },
+    "/tripCounterTimes/{timeId}": { "schema": "TripCounterTime", "description": "Trip counter times collection" },
+    "/bookings/{bookingId}": { "schema": "Booking", "description": "Bookings collection" },
+    "/seatLocks/{lockId}": { "schema": "SeatLock", "description": "Seat locks collection" },
+    "/users/{userId}": { "schema": "User", "description": "Users collection for RBAC" },
+    "/admins/{adminId}": { "schema": "Admin", "description": "Admins collection for custom login" }
+  }
+}
