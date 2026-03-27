@@ -4,7 +4,7 @@ import { format } from 'date-fns';
 import { collection, onSnapshot, addDoc, updateDoc, doc, deleteDoc, query, orderBy, setDoc, serverTimestamp, where, getDocs } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
-import { Counter, Operator, Route, Bus, Crew, Passenger, WalletTransaction, Trip, RouteStop, TripCounterTime, Booking } from '../types';
+import { Counter, Operator, Route, Bus, Crew, Passenger, WalletTransaction, Trip, RouteStop, TripCounterTime, Booking, TripTemplate, CounterTimeTemplate } from '../types';
 import { useLanguage } from '../hooks/useLanguage';
 import { Plus, Edit2, Trash2, Wallet, Map, Bus as BusIcon, Users, UserCheck, ShieldCheck, Search, X, LogIn, Navigation, LayoutDashboard, TrendingUp, Activity, Clock, LogOut, Globe, Printer, Map as MapIcon, Star, Filter, ChevronRight, Wifi, Coffee, Zap, Info, MapPin } from 'lucide-react';
 import { Login } from '../components/Login';
@@ -13,15 +13,18 @@ import { SeatMap } from '../components/SeatMap';
 import { QRCodeSVG, QRCodeCanvas } from 'qrcode.react';
 import { generateTicketPDF } from '../utils/ticketGenerator';
 import { formatInTimeZone } from 'date-fns-tz';
+import { safeFormat, safeGetTime } from '../utils/dateUtils';
 
 const TZ = 'Asia/Dhaka';
 
 export const AdminPanel = () => {
   const navigate = useNavigate();
   const { t } = useLanguage();
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'tracking' | 'counters' | 'operators' | 'routes' | 'fleet' | 'crew' | 'passengers' | 'trips' | 'tripHistory' | 'tripCounterTimes' | 'security'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'tracking' | 'counters' | 'operators' | 'routes' | 'fleet' | 'crew' | 'passengers' | 'trips' | 'tripHistory' | 'tripCounterTimes' | 'tripTemplates' | 'security'>('dashboard');
   const [searchTerm, setSearchTerm] = useState('');
   const [trips, setTrips] = useState<Trip[]>([]);
+  const [tripTemplates, setTripTemplates] = useState<TripTemplate[]>([]);
+  const [counterTimeTemplates, setCounterTimeTemplates] = useState<CounterTimeTemplate[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [tripCounterTimes, setTripCounterTimes] = useState<TripCounterTime[]>([]);
   const [counters, setCounters] = useState<Counter[]>([]);
@@ -82,8 +85,14 @@ export const AdminPanel = () => {
     setIsAuthReady(true);
   }, []);
 
+  const [deletedTrips, setDeletedTrips] = useState<{ coachNumber: string, baseDepartureTime: string }[]>([]);
+  
   useEffect(() => {
     if (!isAdmin) return;
+
+    const unsubDeletedTrips = onSnapshot(collection(db, 'deletedTrips'), (snapshot) => {
+      setDeletedTrips(snapshot.docs.map(doc => doc.data() as { coachNumber: string, baseDepartureTime: string }));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'deletedTrips'));
 
     const unsubCounters = onSnapshot(collection(db, 'counters'), (snapshot) => {
       setCounters(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Counter)));
@@ -127,6 +136,14 @@ export const AdminPanel = () => {
       setTripCounterTimes(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as TripCounterTime)));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'tripCounterTimes'));
 
+    const unsubTripTemplates = onSnapshot(collection(db, 'tripTemplates'), (snapshot) => {
+      setTripTemplates(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as TripTemplate)));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'tripTemplates'));
+
+    const unsubCounterTimeTemplates = onSnapshot(collection(db, 'counterTimeTemplates'), (snapshot) => {
+      setCounterTimeTemplates(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as CounterTimeTemplate)));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'counterTimeTemplates'));
+
     return () => {
       unsubCounters();
       unsubOperators();
@@ -137,60 +154,77 @@ export const AdminPanel = () => {
       unsubTrips();
       unsubBookings();
       unsubTripCounterTimes();
+      unsubTripTemplates();
+      unsubCounterTimeTemplates();
     };
   }, [isAdmin]);
 
   // Recurring Trip Logic: Automatically generate trips for the next 14 days if repeatDaily is true
   useEffect(() => {
-    if (!isAdmin || trips.length === 0) return;
+    if (!isAdmin || tripTemplates.length === 0) return;
 
     const generateRecurringTrips = async () => {
-      const recurringTrips = trips.filter(t => t.repeatDaily);
+      const recurringTemplates = tripTemplates.filter(t => t.repeatDaily);
       
-      for (const trip of recurringTrips) {
-        const tripDate = new Date(trip.departureTime);
-        
+      for (const template of recurringTemplates) {
         // Generate for the next 14 days
         for (let i = 0; i < 14; i++) {
           const targetDate = new Date();
           targetDate.setDate(targetDate.getDate() + i);
-          targetDate.setHours(tripDate.getHours(), tripDate.getMinutes(), 0, 0);
+          
+          const [hours, minutes] = template.baseDepartureTime.split(':').map(Number);
+          targetDate.setHours(hours, minutes, 0, 0);
 
-          // Only generate if targetDate is after or equal to the original trip date
-          if (targetDate >= tripDate) {
-            const alreadyExists = trips.some(t => 
-              t.coachNumber === trip.coachNumber && 
-              new Date(t.departureTime).toDateString() === targetDate.toDateString()
-            );
+          const alreadyExists = trips.some(t => 
+            t.templateId === template.id && 
+            new Date(t.date).toDateString() === targetDate.toDateString()
+          );
 
-            if (!alreadyExists) {
-              try {
-                const { id, ...tripData } = trip;
-                const newDateStr = format(targetDate, 'yyyy-MM-dd');
-                await addDoc(collection(db, 'trips'), {
-                  ...tripData,
-                  date: newDateStr,
-                  departureTime: `${newDateStr}T${trip.baseDepartureTime}`,
-                  status: 'scheduled',
-                  bookedSeats: []
+          if (!alreadyExists) {
+            // Check if in blacklist (using coach and time as fallback if templateId not available in blacklist)
+            const isBlacklisted = deletedTrips.some(dt => (dt.templateId === template.id) || (dt.coachNumber === template.coachNumber && dt.baseDepartureTime === template.baseDepartureTime));
+            if (isBlacklisted) continue;
+
+            try {
+              const { id, ...templateData } = template;
+              const newDateStr = format(targetDate, 'yyyy-MM-dd');
+              const newTripRef = await addDoc(collection(db, 'trips'), {
+                ...templateData,
+                templateId: template.id,
+                date: newDateStr,
+                departureTime: `${newDateStr}T${template.baseDepartureTime}`,
+                status: 'scheduled',
+                bookedSeats: []
+              });
+              
+              // Copy counterTimeTemplates to tripCounterTimes
+              const originalCounterTimes = counterTimeTemplates.filter(ct => ct.templateId === template.id);
+              for (const ct of originalCounterTimes) {
+                const { id: ctId, ...ctData } = ct;
+                await addDoc(collection(db, 'tripCounterTimes'), {
+                  tripId: newTripRef.id,
+                  counterId: ctData.counterId,
+                  arrivalTime: ctData.arrivalTimeOffset.toString(), // We'll store offsets for now or calculate actual times
+                  departureTime: ctData.departureTimeOffset.toString(),
+                  isReportingCounter: ctData.isReportingCounter
                 });
-                console.log(`Generated recurring trip for ${trip.coachNumber} on ${targetDate.toDateString()}`);
-              } catch (err) {
-                console.error("Error generating recurring trip:", err);
               }
+              
+              console.log(`Generated recurring trip from template ${template.name} for ${targetDate.toDateString()}`);
+            } catch (err) {
+              console.error("Error generating recurring trip:", err);
             }
           }
         }
       }
     };
 
-    // Use a timeout to prevent blocking the main thread immediately after trips load
     const timeoutId = setTimeout(() => {
       generateRecurringTrips();
     }, 3000);
 
     return () => clearTimeout(timeoutId);
-  }, [isAdmin, trips.length]);
+  }, [isAdmin, tripTemplates.length, trips.length, counterTimeTemplates.length]);
 
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -334,6 +368,8 @@ export const AdminPanel = () => {
       } else if (activeTab === 'trips') {
         const selectedBoarding = Array.from(e.currentTarget.querySelectorAll('input[name="boardingPoints"]:checked')).map((el: any) => el.value);
         const selectedDropping = Array.from(e.currentTarget.querySelectorAll('input[name="droppingPoints"]:checked')).map((el: any) => el.value);
+        const saveAsTemplate = formData.get('saveAsTemplate') === 'on';
+        
         data = {
           coachNumber: formData.get('coachNumber') as string,
           routeId: formData.get('routeId') as string,
@@ -350,6 +386,21 @@ export const AdminPanel = () => {
           boardingPoints: selectedBoarding,
           droppingPoints: selectedDropping,
         };
+
+        if (saveAsTemplate && !editingItem) {
+          const templateData = {
+            name: `Template for ${data.coachNumber}`,
+            coachNumber: data.coachNumber,
+            routeId: data.routeId,
+            busId: data.busId,
+            baseDepartureTime: data.baseDepartureTime,
+            fare: data.fare,
+            repeatDaily: data.repeatDaily,
+            boardingPoints: data.boardingPoints,
+            droppingPoints: data.droppingPoints
+          };
+          await addDoc(collection(db, 'tripTemplates'), templateData);
+        }
       } else if (activeTab === 'fleet') {
         collectionName = 'buses';
         data = {
@@ -381,6 +432,28 @@ export const AdminPanel = () => {
           email: formData.get('email') as string,
           customId: formData.get('customId') as string,
           password: formData.get('password') as string,
+        };
+      } else if (activeTab === 'tripTemplates') {
+        const selectedBoarding = Array.from(e.currentTarget.querySelectorAll('input[name="boardingPoints"]:checked')).map((el: any) => el.value);
+        const selectedDropping = Array.from(e.currentTarget.querySelectorAll('input[name="droppingPoints"]:checked')).map((el: any) => el.value);
+        data = {
+          name: formData.get('name') as string,
+          coachNumber: formData.get('coachNumber') as string,
+          routeId: formData.get('routeId') as string,
+          busId: formData.get('busId') as string,
+          baseDepartureTime: formData.get('baseDepartureTime') as string,
+          fare: Number(formData.get('fare')) || 500,
+          repeatDaily: formData.get('repeatDaily') === 'on',
+          boardingPoints: selectedBoarding,
+          droppingPoints: selectedDropping,
+        };
+      } else if (activeTab === 'counterTimeTemplates') {
+        data = {
+          templateId: formData.get('templateId') as string,
+          counterId: formData.get('counterId') as string,
+          arrivalTimeOffset: Number(formData.get('arrivalTimeOffset')) || 0,
+          departureTimeOffset: Number(formData.get('departureTimeOffset')) || 0,
+          isReportingCounter: formData.get('isReportingCounter') === 'on',
         };
       } else if (activeTab === 'passengers') {
         data = {
@@ -494,6 +567,33 @@ export const AdminPanel = () => {
   };
 
   const handleDelete = async (collectionName: string, id: string) => {
+    if (collectionName === 'trips') {
+      const tripToDelete = trips.find(t => t.id === id);
+      if (tripToDelete && tripToDelete.templateId) {
+        if (window.confirm('This is a recurring trip. Do you want to delete all future scheduled instances of this trip? History will be preserved.')) {
+          // Add to deletedTrips collection to blacklist
+          await addDoc(collection(db, 'deletedTrips'), {
+            templateId: tripToDelete.templateId,
+            coachNumber: tripToDelete.coachNumber,
+            baseDepartureTime: tripToDelete.baseDepartureTime,
+            deletedAt: new Date().toISOString()
+          });
+          // Delete all future scheduled instances
+          const now = new Date().toISOString();
+          const q = query(
+            collection(db, 'trips'), 
+            where('templateId', '==', tripToDelete.templateId),
+            where('status', '==', 'scheduled'),
+            where('departureTime', '>', now)
+          );
+          const snapshot = await getDocs(q);
+          for (const doc of snapshot.docs) {
+            await deleteDoc(doc.ref);
+          }
+          return;
+        }
+      }
+    }
     setDeleteConfirm({ collection: collectionName, id });
   };
 
@@ -526,7 +626,9 @@ export const AdminPanel = () => {
             { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
             { id: 'counters', label: 'Counters', icon: Wallet },
             { id: 'routes', label: 'Routes', icon: Navigation },
-            { id: 'trips', label: 'Trips', icon: Map },
+            { id: 'tripTemplates', label: 'Trip Templates', icon: Star },
+            { id: 'counterTimeTemplates', label: 'Counter Time Templates', icon: Clock },
+            { id: 'trips', label: 'Daily Trips', icon: Map },
             { id: 'tripHistory', label: 'Trip History', icon: Clock },
             { id: 'tripCounterTimes', label: 'Counter Times', icon: Clock },
             { id: 'fleet', label: 'Fleet', icon: BusIcon },
@@ -659,7 +761,7 @@ export const AdminPanel = () => {
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 <div className="lg:col-span-2 bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
                   <div className="p-6 border-b border-slate-50 flex items-center justify-between">
-                    <h3 className="text-lg font-black uppercase tracking-tight text-slate-800">Trips on {format(new Date(dashboardDate), 'MMM dd, yyyy')}</h3>
+                    <h3 className="text-lg font-black uppercase tracking-tight text-slate-800">Trips on {safeFormat(dashboardDate, 'MMM dd, yyyy')}</h3>
                     <div className="flex items-center gap-4">
                       <input 
                         type="date" 
@@ -683,7 +785,7 @@ export const AdminPanel = () => {
                       <tbody className="divide-y divide-slate-50">
                         {[...trips]
                           .filter(t => t.date === dashboardDate)
-                          .sort((a, b) => new Date(a.departureTime).getTime() - new Date(b.departureTime).getTime())
+                          .sort((a, b) => safeGetTime(a.departureTime) - safeGetTime(b.departureTime))
                           .slice(0, 5)
                           .map(trip => {
                             const bus = buses.find(b => b.id === trip.busId);
@@ -695,7 +797,7 @@ export const AdminPanel = () => {
                                 <td className="px-6 py-4 text-sm font-medium text-slate-500">
                                   <div className="flex items-center gap-2">
                                     <Clock size={14} />
-                                    {format(new Date(trip.departureTime), 'hh:mm a, dd MMM')}
+                                    {safeFormat(trip.departureTime, 'hh:mm a, dd MMM')}
                                   </div>
                                 </td>
                                 <td className="px-6 py-4">
@@ -715,13 +817,30 @@ export const AdminPanel = () => {
                 </div>
 
                 <div className="space-y-6">
-                  <div className="bg-primary p-8 rounded-3xl text-white shadow-xl shadow-primary/20 relative overflow-hidden">
-                    <Globe className="absolute -right-8 -bottom-8 text-white/10" size={160} />
-                    <h3 className="text-xl font-black uppercase tracking-tight mb-2">System Status</h3>
-                    <p className="text-sm text-white/80 mb-6 font-medium leading-relaxed">All systems are operational. Real-time tracking and ticketing are active.</p>
-                    <div className="flex items-center gap-2 bg-white/10 w-fit px-4 py-2 rounded-xl backdrop-blur-sm">
-                      <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
-                      <span className="text-xs font-bold uppercase tracking-widest">Operational</span>
+                  <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm space-y-6">
+                    <h3 className="text-lg font-black uppercase tracking-tight text-slate-800">Quick Actions</h3>
+                    <div className="space-y-3">
+                      <button 
+                        onClick={handleResetAllTracking}
+                        className="w-full p-4 bg-red-50 text-red-600 rounded-2xl font-black uppercase tracking-widest text-xs flex items-center justify-center gap-3 hover:bg-red-100 transition-all border border-red-100 shadow-sm"
+                      >
+                        <Activity size={18} />
+                        Reset All Live Updates
+                      </button>
+                      <button 
+                        onClick={() => setActiveTab('tripTemplates')}
+                        className="w-full p-4 bg-accent/5 text-accent rounded-2xl font-black uppercase tracking-widest text-xs flex items-center justify-center gap-3 hover:bg-accent/10 transition-all border border-accent/10 shadow-sm"
+                      >
+                        <Star size={18} />
+                        Manage Trip Templates
+                      </button>
+                      <button 
+                        onClick={() => { setEditingItem(null); setShowModal(true); setActiveTab('trips'); }}
+                        className="w-full p-4 bg-primary/5 text-primary rounded-2xl font-black uppercase tracking-widest text-xs flex items-center justify-center gap-3 hover:bg-primary/10 transition-all border border-primary/10 shadow-sm"
+                      >
+                        <Plus size={18} />
+                        Create New Daily Trip
+                      </button>
                     </div>
                   </div>
 
@@ -830,6 +949,134 @@ export const AdminPanel = () => {
             </div>
           )}
 
+          {activeTab === 'tripTemplates' && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead className="bg-slate-50/50 border-b border-slate-100">
+                  <tr className="text-slate-500 text-[10px] font-black uppercase tracking-widest">
+                    <th className="px-6 py-4">Template Name</th>
+                    <th className="px-6 py-4">Coach ID</th>
+                    <th className="px-6 py-4">Route</th>
+                    <th className="px-6 py-4">Base Time</th>
+                    <th className="px-6 py-4">Repeat</th>
+                    <th className="px-6 py-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {filteredData(tripTemplates).map(template => {
+                    const route = routes.find(r => r.id === template.routeId);
+                    return (
+                      <tr key={template.id} className="hover:bg-slate-50/50 transition-colors">
+                        <td className="px-6 py-4 font-bold text-slate-800">{template.name}</td>
+                        <td className="px-6 py-4 font-bold text-accent">{template.coachNumber}</td>
+                        <td className="px-6 py-4 text-sm font-bold text-slate-700">{route?.name || 'Unknown Route'}</td>
+                        <td className="px-6 py-4 text-sm text-slate-500 font-medium">
+                          <div className="flex items-center gap-2">
+                            <Clock size={14} />
+                            {template.baseDepartureTime}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className={cn(
+                            "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
+                            template.repeatDaily ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"
+                          )}>
+                            {template.repeatDaily ? 'Daily' : 'Once'}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-right space-x-2">
+                          <button onClick={() => { setEditingItem(template); setShowModal(true); }} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
+                            <Edit2 size={18} />
+                          </button>
+                          <button onClick={() => handleDelete('tripTemplates', template.id)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="Delete Template">
+                            <Trash2 size={18} />
+                          </button>
+                          {template.repeatDaily && (
+                            <button 
+                              onClick={async () => {
+                                if (window.confirm('Are you sure you want to delete all future scheduled trips for this template? History will be preserved.')) {
+                                  await addDoc(collection(db, 'deletedTrips'), {
+                                    templateId: template.id,
+                                    coachNumber: template.coachNumber,
+                                    baseDepartureTime: template.baseDepartureTime,
+                                    deletedAt: new Date().toISOString()
+                                  });
+                                  const now = new Date().toISOString();
+                                  const q = query(
+                                    collection(db, 'trips'), 
+                                    where('templateId', '==', template.id),
+                                    where('status', '==', 'scheduled'),
+                                    where('departureTime', '>', now)
+                                  );
+                                  const snapshot = await getDocs(q);
+                                  for (const doc of snapshot.docs) {
+                                    await deleteDoc(doc.ref);
+                                  }
+                                  alert('All future scheduled trips for this template have been deleted.');
+                                }
+                              }} 
+                              className="p-2 text-orange-600 hover:bg-orange-50 rounded-lg transition-colors"
+                              title="Delete All Recurring Trips"
+                            >
+                              <History size={18} />
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {activeTab === 'counterTimeTemplates' && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead className="bg-slate-50/50 border-b border-slate-100">
+                  <tr className="text-slate-500 text-[10px] font-black uppercase tracking-widest">
+                    <th className="px-6 py-4">Trip Template</th>
+                    <th className="px-6 py-4">Counter</th>
+                    <th className="px-6 py-4">Arrival Offset (min)</th>
+                    <th className="px-6 py-4">Departure Offset (min)</th>
+                    <th className="px-6 py-4">Reporting</th>
+                    <th className="px-6 py-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {filteredData(counterTimeTemplates).map(ctt => {
+                    const template = tripTemplates.find(t => t.id === ctt.templateId);
+                    const counter = counters.find(c => c.id === ctt.counterId);
+                    return (
+                      <tr key={ctt.id} className="hover:bg-slate-50/50 transition-colors">
+                        <td className="px-6 py-4 font-bold text-slate-800">{template?.name || ctt.templateId}</td>
+                        <td className="px-6 py-4 text-sm font-medium text-slate-500">{counter?.name || ctt.counterId}</td>
+                        <td className="px-6 py-4 text-sm text-slate-500">{ctt.arrivalTimeOffset}</td>
+                        <td className="px-6 py-4 text-sm text-slate-500">{ctt.departureTimeOffset}</td>
+                        <td className="px-6 py-4">
+                          <span className={cn(
+                            "px-2 py-1 rounded-full text-[10px] font-black uppercase",
+                            ctt.isReportingCounter ? "bg-emerald-100 text-emerald-600" : "bg-slate-100 text-slate-400"
+                          )}>
+                            {ctt.isReportingCounter ? 'Yes' : 'No'}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-right space-x-2">
+                          <button onClick={() => { setEditingItem(ctt); setShowModal(true); }} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
+                            <Edit2 size={18} />
+                          </button>
+                          <button onClick={() => handleDelete('counterTimeTemplates', ctt.id)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors">
+                            <Trash2 size={18} />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
           {activeTab === 'trips' && (
             <div className="overflow-x-auto">
               <table className="w-full text-left">
@@ -856,13 +1103,13 @@ export const AdminPanel = () => {
                         <td className="px-6 py-4 text-sm text-slate-500 font-medium">
                           <div className="flex items-center gap-2">
                             <Clock size={14} />
-                            {format(new Date(trip.departureTime), 'hh:mm a, dd MMM')}
+                            {safeFormat(trip.departureTime, 'hh:mm a, dd MMM')}
                           </div>
                         </td>
                         <td className="px-6 py-4 text-sm text-slate-500 font-medium">
                           <div className="flex items-center gap-2">
                             <Clock size={14} />
-                            {trip.arrivalTime ? format(new Date(trip.arrivalTime), 'hh:mm a, dd MMM') : 'N/A'}
+                            {safeFormat(`${trip.date}T${trip.arrivalTime}`, 'hh:mm a')}
                           </div>
                         </td>
                         <td className="px-6 py-4">
@@ -926,7 +1173,7 @@ export const AdminPanel = () => {
                         <td className="px-6 py-4 text-sm text-slate-500 font-medium">
                           <div className="flex items-center gap-2">
                             <Clock size={14} />
-                            {format(new Date(trip.departureTime), 'hh:mm a, dd MMM yyyy')}
+                            {safeFormat(trip.departureTime, 'hh:mm a, dd MMM yyyy')}
                           </div>
                         </td>
                         <td className="px-6 py-4">
@@ -1201,7 +1448,7 @@ export const AdminPanel = () => {
                               <BusIcon size={12} /> {bus?.regNo} ({trip.coachNumber})
                             </div>
                             <div className="flex items-center gap-1">
-                              <Clock size={12} /> {format(new Date(trip.departureTime), 'hh:mm a')}
+                              <Clock size={12} /> {safeFormat(trip.departureTime, 'hh:mm a')}
                             </div>
                           </div>
                         </button>
@@ -1235,7 +1482,7 @@ export const AdminPanel = () => {
                           Current Location: {selectedTrip.currentLocation.lat.toFixed(6)}, {selectedTrip.currentLocation.lng.toFixed(6)}
                         </p>
                         <p className="text-xs text-slate-400 mt-2">
-                          Last Updated: {format(new Date(selectedTrip.currentLocation.timestamp), 'hh:mm:ss a')}
+                          Last Updated: {safeFormat(selectedTrip.currentLocation.timestamp, 'hh:mm:ss a')}
                         </p>
                       </div>
                       <div className="w-full max-w-md p-4 bg-white rounded-xl border border-slate-100 shadow-sm text-left">
@@ -1426,6 +1673,121 @@ export const AdminPanel = () => {
 
               {activeTab === 'trips' && (
                 <div className="grid grid-cols-2 gap-4">
+                  {!editingItem && (
+                    <div className="col-span-2 space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Load From Template</label>
+                      <select 
+                        className="input-field"
+                        onChange={(e) => {
+                          const template = tripTemplates.find(t => t.id === e.target.value);
+                          if (template) {
+                            const form = e.target.closest('form');
+                            if (form) {
+                              (form.elements.namedItem('routeId') as HTMLSelectElement).value = template.routeId;
+                              (form.elements.namedItem('busId') as HTMLSelectElement).value = template.busId;
+                              (form.elements.namedItem('coachNumber') as HTMLInputElement).value = template.coachNumber;
+                              (form.elements.namedItem('baseDepartureTime') as HTMLInputElement).value = template.baseDepartureTime;
+                              (form.elements.namedItem('fare') as HTMLInputElement).value = template.fare.toString();
+                              (form.elements.namedItem('repeatDaily') as HTMLInputElement).checked = template.repeatDaily;
+                              
+                              const boardingChecks = form.querySelectorAll('input[name="boardingPoints"]');
+                              boardingChecks.forEach((cb: any) => cb.checked = template.boardingPoints.includes(cb.value));
+                              
+                              const droppingChecks = form.querySelectorAll('input[name="droppingPoints"]');
+                              droppingChecks.forEach((cb: any) => cb.checked = template.droppingPoints.includes(cb.value));
+                            }
+                          }
+                        }}
+                      >
+                        <option value="">Select Template</option>
+                        {tripTemplates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                      </select>
+                    </div>
+                  )}
+                  <div className="col-span-2 space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Route</label>
+                    <select name="routeId" defaultValue={editingItem?.routeId} className="input-field" required>
+                      <option value="">Select Route</option>
+                      {routes.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Bus</label>
+                    <select name="busId" defaultValue={editingItem?.busId} className="input-field" required>
+                      <option value="">Select Bus</option>
+                      {buses.map(b => <option key={b.id} value={b.id}>{b.regNo} ({b.isAC ? 'AC' : 'Non-AC'})</option>)}
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Coach No</label>
+                    <input name="coachNumber" defaultValue={editingItem?.coachNumber} className="input-field" required placeholder="501" />
+                  </div>
+                  <input name="date" type="hidden" value={editingItem?.date || selectedDate} />
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Departure Time</label>
+                    <input name="baseDepartureTime" type="time" defaultValue={editingItem?.baseDepartureTime || '06:00'} className="input-field" required />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Arrival Time</label>
+                    <input name="arrivalTime" type="time" defaultValue={editingItem?.arrivalTime || '12:00'} className="input-field" required />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Fare</label>
+                    <input name="fare" type="number" defaultValue={editingItem?.fare} className="input-field" required />
+                  </div>
+                  <div className="flex items-center gap-3 px-6 py-4 bg-slate-50 rounded-2xl">
+                    <input name="repeatDaily" type="checkbox" defaultChecked={editingItem?.repeatDaily} className="w-5 h-5 rounded border-slate-300 text-accent focus:ring-accent" />
+                    <label className="text-sm font-bold text-slate-600">Repeat Daily</label>
+                  </div>
+                  {!editingItem && (
+                    <div className="flex items-center gap-3 px-6 py-4 bg-blue-50 rounded-2xl">
+                      <input name="saveAsTemplate" type="checkbox" className="w-5 h-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
+                      <label className="text-sm font-bold text-blue-700">Save as Template</label>
+                    </div>
+                  )}
+                  <div className="col-span-2 space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Boarding Points</label>
+                    <div className="grid grid-cols-2 gap-2 p-4 bg-slate-50 rounded-2xl max-h-40 overflow-y-auto">
+                      {counters.map(c => (
+                        <label key={c.id} className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer hover:text-primary">
+                          <input 
+                            type="checkbox" 
+                            name="boardingPoints" 
+                            value={c.id} 
+                            defaultChecked={editingItem?.boardingPoints?.includes(c.id)}
+                            className="w-4 h-4 rounded border-slate-300 text-primary focus:ring-primary"
+                          />
+                          {c.name}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="col-span-2 space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Dropping Points</label>
+                    <div className="grid grid-cols-2 gap-2 p-4 bg-slate-50 rounded-2xl max-h-40 overflow-y-auto">
+                      {counters.map(c => (
+                        <label key={c.id} className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer hover:text-primary">
+                          <input 
+                            type="checkbox" 
+                            name="droppingPoints" 
+                            value={c.id} 
+                            defaultChecked={editingItem?.droppingPoints?.includes(c.id)}
+                            className="w-4 h-4 rounded border-slate-300 text-primary focus:ring-primary"
+                          />
+                          {c.name}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {activeTab === 'tripTemplates' && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="col-span-2 space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Template Name</label>
+                    <input name="name" defaultValue={editingItem?.name} className="input-field" required placeholder="Daily Dhaka Express" />
+                  </div>
                   <div className="col-span-2 space-y-1.5">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Route</label>
                     <select name="routeId" defaultValue={editingItem?.routeId} className="input-field" required>
@@ -1445,16 +1807,8 @@ export const AdminPanel = () => {
                     <input name="coachNumber" defaultValue={editingItem?.coachNumber} className="input-field" required placeholder="501" />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Date</label>
-                    <input name="date" type="date" defaultValue={editingItem?.date || new Date().toISOString().split('T')[0]} className="input-field" required />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Departure Time</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Base Departure Time</label>
                     <input name="baseDepartureTime" type="time" defaultValue={editingItem?.baseDepartureTime || '06:00'} className="input-field" required />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Arrival Time</label>
-                    <input name="arrivalTime" type="time" defaultValue={editingItem?.arrivalTime || '12:00'} className="input-field" required />
                   </div>
                   <div className="space-y-1.5">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Fare</label>
@@ -1499,6 +1853,39 @@ export const AdminPanel = () => {
                     </div>
                   </div>
                 </div>
+              )}
+
+              {activeTab === 'counterTimeTemplates' && (
+                <>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Trip Template</label>
+                    <select name="templateId" defaultValue={editingItem?.templateId} className="input-field" required>
+                      <option value="">Select Trip Template</option>
+                      {tripTemplates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Counter</label>
+                    <select name="counterId" defaultValue={editingItem?.counterId} className="input-field" required>
+                      <option value="">Select Counter</option>
+                      {counters.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Arrival Offset (min)</label>
+                      <input name="arrivalTimeOffset" type="number" defaultValue={editingItem?.arrivalTimeOffset || 0} className="input-field" required />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Departure Offset (min)</label>
+                      <input name="departureTimeOffset" type="number" defaultValue={editingItem?.departureTimeOffset || 0} className="input-field" required />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3 px-6 py-4 bg-slate-50 rounded-2xl">
+                    <input name="isReportingCounter" type="checkbox" defaultChecked={editingItem?.isReportingCounter} className="w-5 h-5 rounded border-slate-300 text-accent focus:ring-accent" />
+                    <label className="text-sm font-bold text-slate-600">Reporting Counter</label>
+                  </div>
+                </>
               )}
 
               {activeTab === 'fleet' && (

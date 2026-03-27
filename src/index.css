@@ -12,6 +12,165 @@
 }
 
 @layer base {
+  :root {
+    --bg-dark: #17252A;
+    --teal-deep: #2B7A78;
+    --teal-primary: #3AAFA9;
+    --ice-blue: #DEF2F1;
+    --white: #FEFFFF;
+  }
+
+  body.loading {
+    margin: 0;
+    padding: 0;
+    background: var(--bg-dark);
+    color: var(--white);
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* The Main Stage */
+  #site-loader {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+    background: radial-gradient(circle at 50% 50%, var(--teal-deep) 0%, var(--bg-dark) 100%);
+    transition: all 1.8s cubic-bezier(0.7, 0, 0.3, 1);
+  }
+
+  /* Abstract Light Streaks */
+  .light-beam {
+    position: absolute;
+    width: 150vw;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--teal-primary), transparent);
+    filter: blur(1px);
+    opacity: 0.15;
+    transform: rotate(-12deg);
+    animation: beamMove 4s infinite cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .beam-1 { top: 35%; animation-delay: 0s; }
+  .beam-2 { top: 65%; animation-delay: 2s; opacity: 0.08; }
+
+  @keyframes beamMove {
+    0% { transform: translateX(-100%) rotate(-12deg); opacity: 0; }
+    50% { opacity: 0.3; }
+    100% { transform: translateX(100%) rotate(-12deg); opacity: 0; }
+  }
+
+  /* Typography Container */
+  .logo-container {
+    position: relative;
+    padding: 2rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .brand-text {
+    font-size: 8rem;
+    font-weight: 700;
+    letter-spacing: -0.05em;
+    position: relative;
+    color: rgba(255, 255, 255, 0.05);
+    background: linear-gradient(180deg, var(--white) 0%, var(--teal-primary) 60%, var(--teal-deep) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    filter: drop-shadow(0 0 30px rgba(58, 175, 169, 0.2));
+  }
+
+  .brand-text::after {
+    content: 'SwiftLine';
+    position: absolute;
+    left: 0;
+    top: 0;
+    color: var(--white);
+    width: 100%;
+    height: 100%;
+    -webkit-mask-image: linear-gradient(75deg, transparent 40%, #fff 50%, transparent 60%);
+    mask-image: linear-gradient(75deg, transparent 40%, #fff 50%, transparent 60%);
+    -webkit-mask-size: 200% 100%;
+    mask-size: 200% 100%;
+    animation: scan 3.5s infinite ease-in-out;
+  }
+
+  @keyframes scan {
+    0% { -webkit-mask-position: 150% 0; mask-position: 150% 0; }
+    100% { -webkit-mask-position: -50% 0; mask-position: -50% 0; }
+  }
+
+  .tagline {
+    font-size: 0.8rem;
+    font-weight: 300;
+    letter-spacing: 1.8rem;
+    text-transform: uppercase;
+    margin-top: -1.2rem;
+    margin-left: 1.8rem; 
+    color: var(--ice-blue);
+    opacity: 0.7;
+    animation: fadeIn 3s ease-out forwards;
+  }
+
+  /* Dot Loader Integration */
+  .loader-wrapper {
+    margin-top: 6rem;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .loader {
+    width: 28px;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    background: var(--teal-primary);
+    animation: l2 1.5s infinite;
+    filter: drop-shadow(0 0 10px rgba(58, 175, 169, 0.4));
+  }
+
+  @keyframes l2 {
+    0%, 100% {
+      transform: translate(-35px);
+      box-shadow: 0 0 var(--teal-deep), 0 0 var(--ice-blue);
+    }
+    40% {
+      transform: translate(35px);
+      box-shadow: -15px 0 var(--teal-deep), -30px 0 var(--ice-blue);
+    }
+    50% {
+      transform: translate(35px);
+      box-shadow: 0 0 var(--teal-deep), 0 0 var(--ice-blue);
+    }
+    90% {
+      transform: translate(-35px);
+      box-shadow: 15px 0 var(--teal-deep), 30px 0 var(--ice-blue);
+    }
+  }
+
+  /* Exit Transition */
+  body.loaded #site-loader {
+    opacity: 0;
+    transform: scale(1.1);
+    filter: blur(60px);
+    pointer-events: none;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 0.7; transform: translateY(0); }
+  }
+
+  @media (max-width: 640px) {
+    .brand-text { font-size: 4rem; }
+    .tagline { font-size: 0.5rem; letter-spacing: 0.8rem; margin-left: 0.8rem; }
+  }
+
   body {
     @apply font-sans bg-white text-primary antialiased;
   }

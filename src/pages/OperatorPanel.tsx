@@ -8,7 +8,7 @@ import { Bus as BusIcon, Search, User, Phone, Mail, Printer, MapPin, Wallet, Clo
 import { format } from 'date-fns';
 import { Login } from '../components/Login';
 import { QRCodeSVG, QRCodeCanvas } from 'qrcode.react';
-import { generateTicketPDF } from '../utils/ticketGenerator';
+import { generateTicketPDF, printTicketHTML } from '../utils/ticketGenerator';
 
 export const OperatorPanel = () => {
   const { t } = useLanguage();
@@ -18,6 +18,7 @@ export const OperatorPanel = () => {
   const [operatorProfile, setOperatorProfile] = useState<Operator | null>(null);
   const [counters, setCounters] = useState<Counter[]>([]);
   const [selectedCounter, setSelectedCounter] = useState<Counter | null>(null);
+  const [lockedSeats, setLockedSeats] = useState<string[]>([]);
   const [trips, setTrips] = useState<Trip[]>([]);
   const [filteredTrips, setFilteredTrips] = useState<Trip[]>([]);
   const [selectedTrip, setSelectedTrip] = useState<Trip | null>(null);
@@ -369,7 +370,27 @@ export const OperatorPanel = () => {
     }
   };
 
-  const printTicket = () => {
+  const handlePrintTicket = () => {
+    if (!bookingSuccess) return;
+    const trip = trips.find(t => t.id === bookingSuccess.tripId);
+    const route = routes.find(r => r.id === trip?.routeId);
+    const bus = buses.find(b => b.id === trip?.busId);
+    const bPoint = counters.find(c => c.id === bookingSuccess.boardingStopId);
+    const dPoint = counters.find(c => c.id === bookingSuccess.droppingStopId);
+
+    printTicketHTML(
+      bookingSuccess,
+      trip,
+      route,
+      bPoint,
+      dPoint,
+      bus,
+      passengerData,
+      'ticket-qrcode'
+    );
+  };
+
+  const handleDownloadETicket = () => {
     if (!bookingSuccess) return;
     const trip = trips.find(t => t.id === bookingSuccess.tripId);
     const route = routes.find(r => r.id === trip?.routeId);
@@ -543,6 +564,28 @@ export const OperatorPanel = () => {
                   bookings={bookings}
                   passengers={passengers}
                   counters={counters}
+                  onReprint={(booking) => {
+                    const trip = trips.find(t => t.id === booking.tripId);
+                    const route = routes.find(r => r.id === trip?.routeId);
+                    const bus = buses.find(b => b.id === trip?.busId);
+                    const bPoint = counters.find(c => c.id === booking.boardingStopId);
+                    const dPoint = counters.find(c => c.id === booking.droppingStopId);
+                    const passenger = passengers.find(p => p.id === booking.passengerId);
+                    
+                    generateTicketPDF(
+                      booking,
+                      trip,
+                      route,
+                      bPoint,
+                      dPoint,
+                      bus,
+                      passenger || { name: 'Unknown', phone: '', email: '', gender: 'male' },
+                      'ticket-qrcode'
+                    );
+                  }}
+                  onDetails={(booking) => {
+                    alert(`Booking ID: ${booking.id}\nPassenger: ${passengers.find(p => p.id === booking.passengerId)?.name}\nSeats: ${booking.seats.join(', ')}`);
+                  }}
                   isOperator={true}
                 />
                 
@@ -719,32 +762,82 @@ export const OperatorPanel = () => {
           </div>
         )}
       </div>
+    </div>
 
-        {bookingSuccess && (
-          <div className="card-premium border-accent/20 bg-accent/5">
-            <div className="flex flex-col md:flex-row items-center gap-8">
-              <div className="bg-white p-4 rounded-[24px] shadow-sm border border-accent/10">
-                <QRCodeCanvas id="ticket-qrcode" value={bookingSuccess.id} size={120} />
-              </div>
-              <div className="flex-1 space-y-4 text-center md:text-left">
-                <div>
-                  <h3 className="text-2xl font-black text-accent uppercase tracking-tight">Booking Success!</h3>
-                  <p className="text-slate-600 font-bold">Ticket ID: <span className="text-accent">{bookingSuccess.id}</span></p>
+      {/* Success Modal */}
+      {bookingSuccess && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-primary/95 backdrop-blur-xl p-4 md:p-8">
+          <div className="bg-white rounded-[3.5rem] w-full max-w-4xl max-h-[90vh] overflow-y-auto shadow-[0_50px_100px_rgba(0,0,0,0.5)] relative">
+            <button 
+              onClick={() => setBookingSuccess(null)} 
+              className="absolute top-8 right-8 p-4 bg-slate-100 hover:bg-slate-200 rounded-full transition-all z-10 group"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-slate-500 group-hover:text-primary group-hover:rotate-90 transition-all duration-500"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            </button>
+
+            <div className="p-8 md:p-16 grid md:grid-cols-2 gap-12 items-center">
+              <div className="space-y-8 text-center md:text-left">
+                <div className="relative inline-flex">
+                  <div className="absolute inset-0 bg-emerald-400 rounded-full animate-ping opacity-20" />
+                  <div className="relative bg-emerald-500 p-6 rounded-3xl shadow-2xl shadow-emerald-200">
+                    <CheckCircle2 size={48} className="text-white" />
+                  </div>
                 </div>
-                <div className="flex flex-wrap gap-3 justify-center md:justify-start">
-                  <button onClick={printTicket} className="bg-accent text-white px-6 py-3 rounded-xl font-black uppercase tracking-widest flex items-center gap-2 hover:bg-accent/90 transition-all shadow-lg shadow-accent/20">
-                    <Printer size={18} />
-                    Print Ticket
-                  </button>
-                  <button onClick={() => setBookingSuccess(null)} className="px-6 py-3 bg-white border border-accent/20 text-accent font-black rounded-xl hover:bg-accent/5 transition-all uppercase tracking-widest">
+
+                <div className="space-y-4">
+                  <h2 className="text-5xl font-black text-primary tracking-tighter leading-tight">Booking<br />Successful!</h2>
+                  <p className="text-slate-500 font-bold text-xl">Your Ticket ID: <span className="text-accent font-black font-num">{bookingSuccess.id}</span></p>
+                  {(() => {
+                    const trip = trips.find(t => t.id === bookingSuccess.tripId);
+                    return trip ? (
+                      <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 inline-block">
+                        <p className="text-slate-500 font-bold text-sm uppercase tracking-widest mb-1">Travel Date</p>
+                        <p className="text-primary font-black text-xl font-num">{format(new Date(trip.departureTime), 'dd MMMM, yyyy')}</p>
+                      </div>
+                    ) : null;
+                  })()}
+                </div>
+
+                <div className="flex flex-col gap-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <button 
+                      onClick={handlePrintTicket} 
+                      className="w-full bg-primary text-white py-4 rounded-2xl font-black text-lg flex items-center justify-center gap-3 shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all"
+                    >
+                      <Printer size={20} />
+                      <span>Print</span>
+                    </button>
+                    <button 
+                      onClick={handleDownloadETicket} 
+                      className="w-full bg-accent text-white py-4 rounded-2xl font-black text-lg flex items-center justify-center gap-3 shadow-xl shadow-accent/20 hover:scale-[1.02] active:scale-95 transition-all"
+                    >
+                      <Download size={20} />
+                      <span>Download</span>
+                    </button>
+                  </div>
+                  <button 
+                    onClick={() => setBookingSuccess(null)} 
+                    className="py-4 bg-white border-2 border-slate-100 rounded-2xl font-black text-primary hover:border-accent hover:text-accent transition-all flex items-center justify-center gap-2"
+                  >
                     New Booking
                   </button>
                 </div>
               </div>
+
+              <div className="bg-slate-50 rounded-[2.5rem] p-8 md:p-12 border border-slate-100 flex flex-col items-center justify-center gap-8 relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-accent via-emerald-400 to-accent" />
+                <div className="bg-white p-6 rounded-[2rem] shadow-xl shadow-slate-200/50">
+                  <QRCodeCanvas id="ticket-qrcode" value={bookingSuccess.id} size={200} level="H" className="w-full h-auto" />
+                </div>
+                <div className="text-center space-y-2">
+                  <p className="text-slate-400 font-bold uppercase tracking-widest text-sm">Scan for Details</p>
+                  <p className="text-slate-600 font-medium text-sm">Present this QR code while boarding</p>
+                </div>
+              </div>
             </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Right Column: Live Trips */}
       <div className="lg:col-span-4 space-y-6">

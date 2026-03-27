@@ -5,9 +5,44 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>My Google AI Studio App</title>
   </head>
-  <body>
+  <body class="loading">
+    <div id="site-loader">
+        <div class="light-beam beam-1"></div>
+        <div class="light-beam beam-2"></div>
+
+        <div class="logo-container">
+            <h1 class="brand-text">SwiftLine</h1>
+            <p class="tagline">The Art of Arrival</p>
+            
+            <div class="loader-wrapper">
+                <div class="loader"></div>
+            </div>
+        </div>
+
+        <div class="absolute bottom-12 text-[9px] font-medium tracking-[0.8em] opacity-30 uppercase">
+            Optimized Travel Systems
+        </div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    <script>
+        const path = window.location.pathname;
+        const isPanel = path.includes('admin') || path.includes('operator') || path.includes('supervisor') || path.includes('driver');
+        
+        if (isPanel) {
+            document.body.classList.remove('loading');
+            document.body.classList.add('loaded');
+            const loader = document.getElementById('site-loader');
+            if (loader) loader.style.display = 'none';
+        } else {
+            window.addEventListener('load', () => {
+                setTimeout(() => {
+                    document.body.classList.remove('loading');
+                    document.body.classList.add('loaded');
+                }, 3800);
+            });
+        }
+    </script>
   </body>
 </html>
 

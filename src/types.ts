@@ -91,21 +91,46 @@ export interface TripCounterTime {
   isReportingCounter?: boolean;
 }
 
+export interface TripTemplate {
+  id: string;
+  name: string; // e.g., "Kushtia -> Dhaka Morning 1"
+  coachNumber: string;
+  routeId: string;
+  busId: string;
+  crewIds: string[];
+  baseDepartureTime: string; // HH:mm
+  fare: number;
+  boardingPoints?: string[];
+  droppingPoints?: string[];
+  repeatDaily: boolean;
+  activeDays?: number[]; // [0,1,2,3,4,5,6] for Sun-Sat
+}
+
+export interface CounterTimeTemplate {
+  id: string;
+  templateId: string;
+  counterId: string;
+  arrivalTimeOffset: number; // Minutes from baseDepartureTime
+  departureTimeOffset: number; // Minutes from baseDepartureTime
+  isReportingCounter?: boolean;
+}
+
 export interface Trip {
   id: string;
+  templateId?: string; // Link to parent template
   coachNumber: string;
   routeId: string;
   busId: string;
   crewIds: string[];
   date: string;
-  baseDepartureTime: string;
-  departureTime: string; // Keep for backward compatibility or as first stop time
+  baseDepartureTime: string; // HH:mm
+  departureTime: string; // ISO string for the specific date
   status: 'scheduled' | 'departed' | 'arrived' | 'cancelled';
   currentStopIndex: number;
   stopLogs: StopLog[];
   fare: number;
-  boardingPoints?: string[]; // Array of counter IDs
-  droppingPoints?: string[]; // Array of counter IDs
+  boardingPoints?: string[];
+  droppingPoints?: string[];
   repeatDaily?: boolean;
   currentLocation?: { lat: number; lng: number; timestamp: string };
   nextStopId?: string;

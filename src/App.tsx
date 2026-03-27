@@ -10,6 +10,7 @@ import { AdminPanel } from './pages/AdminPanel';
 import { OperatorPanel } from './pages/OperatorPanel';
 import { PassengerPanel } from './pages/PassengerPanel';
 import { SupervisorPanel } from './pages/SupervisorPanel';
+import { DriverPanel } from './pages/DriverPanel';
 import { AboutUs } from './pages/AboutUs';
 import { Contact } from './pages/Contact';
 import { TrackTicket } from './pages/TrackTicket';
@@ -126,7 +127,7 @@ export default function App() {
     return <>{children}</>;
   };
 
-  const isFullScreenRoute = ['/admin-portal', '/operator-panel'].includes(location.pathname);
+  const isFullScreenRoute = ['/admin-portal', '/operator-panel', '/', '/track-bus', '/driver-panel', '/supervisor-panel'].includes(location.pathname);
 
   return (
     <ErrorBoundary>
@@ -162,6 +163,11 @@ export default function App() {
               <Route path="/supervisor-panel" element={
                 <ProtectedRoute allowedRoles={['supervisor', 'admin']}>
                   <SupervisorPanel />
+                </ProtectedRoute>
+              } />
+              <Route path="/driver-panel" element={
+                <ProtectedRoute allowedRoles={['driver', 'admin']}>
+                  <DriverPanel />
                 </ProtectedRoute>
               } />
 
