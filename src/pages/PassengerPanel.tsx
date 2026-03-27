@@ -318,27 +318,6 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
         console.error("Failed to remove locks", e);
       }
       
-      // Send confirmation email
-      try {
-        const boardingCounterName = counters.find(c => c.id === selectedBoarding)?.name || selectedBoarding;
-        const droppingCounterName = counters.find(c => c.id === selectedDropping)?.name || selectedDropping;
-
-        await fetch('/api/send-booking-confirmation', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            email: passengerData.email,
-            passengerName: passengerData.name,
-            ticketId: ticketId,
-            ticketDetails: `Seats: ${selectedSeats.join(', ')}, Total Fare: ${selectedSeats.length * (selectedTrip.fare || 500)}`,
-            boardingCounter: boardingCounterName,
-            droppingCounter: droppingCounterName
-          }),
-        });
-      } catch (emailError) {
-        console.error("Failed to send confirmation email:", emailError);
-      }
-      
       setBookingSuccess(bookingData as Booking);
       setSelectedTrip(null);
       setSelectedSeats([]);
