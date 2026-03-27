@@ -8,26 +8,26 @@ export const Footer = () => {
 
   const columns = [
     {
-      title: t('লিঙ্ক', 'Links'),
+      title: 'Links',
       items: [
-        { label: t('আমাদের সম্পর্কে', 'About Us'), path: '/about' },
-        { label: t('যোগাযোগ', 'Contact'), path: '/contact' },
-        { label: t('শর্তাবলী', 'Terms'), path: '/terms' },
-        { label: t('গোপনীয়তা নীতি', 'Privacy Policy'), path: '/privacy' },
-        { label: t('রিফান্ড নীতি', 'Refund Policy'), path: '/refund' },
+        { label: 'About Us', path: '/about' },
+        { label: 'Contact', path: '/contact' },
+        { label: 'Terms', path: '/terms' },
+        { label: 'Privacy Policy', path: '/privacy' },
+        { label: 'Refund Policy', path: '/refund' },
       ]
     },
     {
-      title: t('সহায়তা', 'Support'),
+      title: 'Support',
       items: [
-        { label: t('হেল্প সেন্টার', 'Help Center'), path: '/help' },
-        { label: t('টিকিট বাতিল', 'Cancel Ticket'), path: '/cancel' },
-        { label: t('ট্র্যাকিং', 'Tracking'), path: '/track-ticket' },
-        { label: t('এফএকিউ', 'FAQ'), path: '/faq' },
+        { label: 'Help Center', path: '/help' },
+        { label: 'Cancel Ticket', path: '/cancel' },
+        { label: 'Tracking', path: '/track-ticket' },
+        { label: 'FAQ', path: '/faq' },
       ]
     },
     {
-      title: t('জনপ্রিয় রুট', 'Popular Routes'),
+      title: 'Popular Routes',
       items: [
         { label: 'Dhaka - Kushtia', path: '#' },
         { label: 'Dhaka - Sylhet', path: '#' },
@@ -49,7 +49,7 @@ export const Footer = () => {
             <span className="text-2xl font-bold tracking-tighter text-white">SwiftLine</span>
           </div>
           <p className="text-slate-400 max-w-sm leading-relaxed">
-            {t('সুইফটলাইন একটি প্রিমিয়াম বাস টিকেট বুকিং এবং ফ্লিট ম্যানেজমেন্ট সিস্টেম। আমরা যাত্রী নিরাপত্তা এবং আরামদায়ক ভ্রমণের জন্য প্রতিশ্রুতিবদ্ধ।', 'SwiftLine is a premium bus ticketing and fleet management system. We are committed to passenger safety and comfortable travel.')}
+            SwiftLine is a premium bus ticketing and fleet management system. We are committed to passenger safety and comfortable travel.
           </p>
           <div className="flex items-center gap-4 pt-4">
             <a href="#" className="p-2 bg-white/10 rounded-xl hover:bg-accent transition-colors"><Facebook size={20} /></a>
@@ -79,7 +79,7 @@ export const Footer = () => {
 
         {/* Column 5: Contact Info & App Badges */}
         <div className="space-y-6">
-          <h4 className="text-lg font-bold mb-6 text-white">{t('যোগাযোগ', 'Contact Info')}</h4>
+          <h4 className="text-lg font-bold mb-6 text-white">Contact Info</h4>
           <ul className="space-y-4 text-sm text-slate-400">
             <li className="flex items-start gap-3">
               <Phone size={18} className="text-accent shrink-0" />
@@ -95,7 +95,7 @@ export const Footer = () => {
             </li>
           </ul>
           <div className="pt-6 space-y-3">
-            <p className="text-xs font-bold uppercase tracking-widest text-slate-500">{t('অ্যাপ ডাউনলোড করুন', 'Download App')}</p>
+            <p className="text-xs font-bold uppercase tracking-widest text-slate-500">Download App</p>
             <div className="flex flex-wrap gap-2">
               <button className="flex items-center gap-2 bg-white/10 px-4 py-2 rounded-xl hover:bg-white/20 transition-colors">
                 <Download size={16} />
@@ -123,7 +123,7 @@ export const Footer = () => {
       >
         <MessageCircle size={32} />
         <span className="absolute right-full mr-4 top-1/2 -translate-y-1/2 bg-white text-slate-900 px-4 py-2 rounded-xl text-sm font-bold shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
-          {t('আমাদের সাথে চ্যাট করুন', 'Chat with Support')}
+          Chat with Support
         </span>
       </a>
     </footer>

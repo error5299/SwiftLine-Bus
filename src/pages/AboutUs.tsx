@@ -7,10 +7,10 @@ export const AboutUs: React.FC = () => {
   const { t } = useLanguage();
 
   const stats = [
-    { label: t('সন্তুষ্ট যাত্রী', 'Happy Passengers'), value: '1M+', icon: Users },
-    { label: t('বাস পার্টনার', 'Bus Partners'), value: '50+', icon: BusIcon },
-    { label: t('রুট সংখ্যা', 'Total Routes'), value: '200+', icon: Globe },
-    { label: t('সেবার বছর', 'Years of Service'), value: '5+', icon: Clock },
+    { label: 'Happy Passengers', value: '1M+', icon: Users },
+    { label: 'Bus Partners', value: '50+', icon: BusIcon },
+    { label: 'Total Routes', value: '200+', icon: Globe },
+    { label: 'Years of Service', value: '5+', icon: Clock },
   ];
 
   return (
@@ -26,10 +26,10 @@ export const AboutUs: React.FC = () => {
             animate={{ opacity: 1, y: 0 }}
             className="text-5xl md:text-7xl font-black tracking-tighter text-white"
           >
-            {t('সুইফটলাইন সম্পর্কে জানুন', 'About SwiftLine')}
+            About SwiftLine
           </motion.h1>
           <p className="text-white/70 text-xl font-medium">
-            {t('আমরা বাংলাদেশের যাতায়াত ব্যবস্থাকে ডিজিটাল এবং সহজতর করার লক্ষ্যে কাজ করছি।', 'We are working to digitize and simplify the transportation system in Bangladesh.')}
+            We are working to digitize and simplify the transportation system in Bangladesh.
           </p>
         </div>
       </section>
@@ -56,16 +56,16 @@ export const AboutUs: React.FC = () => {
       {/* Mission & Vision */}
       <div className="grid md:grid-cols-2 gap-12">
         <div className="space-y-6">
-          <h2 className="text-4xl font-black text-primary tracking-tighter">{t('আমাদের লক্ষ্য', 'Our Mission')}</h2>
+          <h2 className="text-4xl font-black text-primary tracking-tighter">Our Mission</h2>
           <p className="text-slate-500 leading-relaxed text-lg">
-            {t('প্রযুক্তির সঠিক ব্যবহারের মাধ্যমে প্রত্যেক যাত্রীর জন্য একটি নিরাপদ, নির্ভরযোগ্য এবং আনন্দদায়ক ভ্রমণ অভিজ্ঞতা নিশ্চিত করা। আমরা বিশ্বাস করি যাতায়াত হওয়া উচিত ঝামেলামুক্ত এবং সাশ্রয়ী।', 'To ensure a safe, reliable, and enjoyable travel experience for every passenger through the correct use of technology. We believe transportation should be hassle-free and affordable.')}
+            To ensure a safe, reliable, and enjoyable travel experience for every passenger through the correct use of technology. We believe transportation should be hassle-free and affordable.
           </p>
           <div className="space-y-4">
             {[
-              t('১০০% ডিজিটাল টিকিট ব্যবস্থা', '100% Digital Ticketing'),
-              t('লাইভ বাস ট্র্যাকিং সুবিধা', 'Live Bus Tracking'),
-              t('নিরাপদ পেমেন্ট গেটওয়ে', 'Secure Payment Gateway'),
-              t('২৪/৭ কাস্টমার সাপোর্ট', '24/7 Customer Support')
+              '100% Digital Ticketing',
+              'Live Bus Tracking',
+              'Secure Payment Gateway',
+              '24/7 Customer Support'
             ].map((item, i) => (
               <div key={i} className="flex items-center gap-3">
                 <div className="bg-emerald-500/10 p-1 rounded-full">

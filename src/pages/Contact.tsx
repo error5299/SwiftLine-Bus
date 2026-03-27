@@ -27,10 +27,10 @@ export const Contact: React.FC = () => {
             animate={{ opacity: 1, y: 0 }}
             className="text-5xl md:text-7xl font-black tracking-tighter text-white"
           >
-            {t('আমাদের সাথে যোগাযোগ করুন', 'Contact Us')}
+            Contact Us
           </motion.h1>
           <p className="text-white/70 text-xl font-medium">
-            {t('আপনার যেকোনো প্রশ্ন বা মতামতের জন্য আমরা সবসময় প্রস্তুত।', 'We are always ready for any of your questions or feedback.')}
+            We are always ready for any of your questions or feedback.
           </p>
         </div>
       </section>
@@ -39,7 +39,7 @@ export const Contact: React.FC = () => {
         {/* Contact Info */}
         <div className="lg:col-span-1 space-y-8">
           <div className="card-premium space-y-8">
-            <h3 className="text-2xl font-black text-primary">{t('যোগাযোগের তথ্য', 'Contact Information')}</h3>
+            <h3 className="text-2xl font-black text-primary">Contact Information</h3>
             
             <div className="space-y-6">
               <div className="flex items-start gap-4">
@@ -47,7 +47,7 @@ export const Contact: React.FC = () => {
                   <Phone className="text-accent" size={20} />
                 </div>
                 <div>
-                  <p className="text-xs font-black text-slate-400 uppercase tracking-widest">{t('ফোন নম্বর', 'Phone Number')}</p>
+                  <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Phone Number</p>
                   <p className="text-lg font-bold text-primary">+880 1234 567890</p>
                 </div>
               </div>
@@ -57,7 +57,7 @@ export const Contact: React.FC = () => {
                   <Mail className="text-accent" size={20} />
                 </div>
                 <div>
-                  <p className="text-xs font-black text-slate-400 uppercase tracking-widest">{t('ইমেইল অ্যাড্রেস', 'Email Address')}</p>
+                  <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Email Address</p>
                   <p className="text-lg font-bold text-primary">support@swiftline.com</p>
                 </div>
               </div>
@@ -67,14 +67,14 @@ export const Contact: React.FC = () => {
                   <MapPin className="text-accent" size={20} />
                 </div>
                 <div>
-                  <p className="text-xs font-black text-slate-400 uppercase tracking-widest">{t('অফিস ঠিকানা', 'Office Address')}</p>
+                  <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Office Address</p>
                   <p className="text-lg font-bold text-primary">Level 12, Tech Tower, Banani, Dhaka-1213</p>
                 </div>
               </div>
             </div>
 
             <div className="pt-8 border-t border-slate-100 space-y-4">
-              <p className="text-xs font-black text-slate-400 uppercase tracking-widest">{t('সোশ্যাল মিডিয়া', 'Follow Us')}</p>
+              <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Follow Us</p>
               <div className="flex gap-4">
                 {[Facebook, Twitter, Instagram].map((Icon, i) => (
                   <button key={i} className="p-3 bg-slate-50 rounded-xl text-slate-400 hover:text-accent hover:bg-accent/5 transition-all">
@@ -98,18 +98,18 @@ export const Contact: React.FC = () => {
                 <div className="bg-emerald-500/10 w-24 h-24 rounded-full flex items-center justify-center mx-auto">
                   <MessageSquare className="text-emerald-500" size={48} />
                 </div>
-                <h3 className="text-3xl font-black text-primary">{t('ধন্যবাদ!', 'Thank You!')}</h3>
+                <h3 className="text-3xl font-black text-primary">Thank You!</h3>
                 <p className="text-slate-500 text-lg max-w-md mx-auto">
-                  {t('আপনার মেসেজটি সফলভাবে পাঠানো হয়েছে। আমরা খুব শীঘ্রই আপনার সাথে যোগাযোগ করব।', 'Your message has been successfully sent. We will contact you very soon.')}
+                  Your message has been successfully sent. We will contact you very soon.
                 </p>
               </motion.div>
             ) : (
               <form onSubmit={handleSubmit} className="space-y-8">
-                <h3 className="text-2xl font-black text-primary">{t('মেসেজ পাঠান', 'Send a Message')}</h3>
+                <h3 className="text-2xl font-black text-primary">Send a Message</h3>
                 
                 <div className="grid md:grid-cols-2 gap-6">
                   <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">{t('আপনার নাম', 'Your Name')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Your Name</label>
                     <input 
                       required
                       type="text" 
@@ -119,7 +119,7 @@ export const Contact: React.FC = () => {
                     />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">{t('ইমেইল অ্যাড্রেস', 'Email Address')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Email Address</label>
                     <input 
                       required
                       type="email" 
@@ -131,7 +131,7 @@ export const Contact: React.FC = () => {
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">{t('বিষয়', 'Subject')}</label>
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Subject</label>
                   <input 
                     required
                     type="text" 
@@ -142,7 +142,7 @@ export const Contact: React.FC = () => {
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">{t('মেসেজ', 'Message')}</label>
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Message</label>
                   <textarea 
                     required
                     rows={6}
@@ -154,7 +154,7 @@ export const Contact: React.FC = () => {
 
                 <button type="submit" className="btn-primary !py-5 w-full rounded-2xl flex items-center justify-center gap-3 shadow-xl shadow-primary/20">
                   <Send size={20} />
-                  <span className="text-lg">{t('মেসেজ পাঠান', 'Send Message')}</span>
+                  <span className="text-lg">Send Message</span>
                 </button>
               </form>
             )}

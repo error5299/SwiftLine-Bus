@@ -27,20 +27,20 @@ export const Login: React.FC<LoginProps> = ({ onLogin, error, title }) => {
           </div>
           <div className="space-y-1">
             <h2 className="text-3xl font-black text-primary">{title}</h2>
-            <p className="text-slate-500 font-medium">{t('আপনার আইডি এবং পাসওয়ার্ড দিয়ে লগইন করুন', 'Login with your ID and Password')}</p>
+            <p className="text-slate-500 font-medium">Login with your ID and Password</p>
           </div>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-6">
           <div className="space-y-2">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">{t('আইডি', 'ID')}</label>
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">ID</label>
             <div className="relative group">
               <User className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-accent transition-colors" size={20} />
               <input
                 type="text"
                 required
                 className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent transition-all font-bold text-primary"
-                placeholder={t('আপনার আইডি লিখুন', 'Enter your ID')}
+                placeholder="Enter your ID"
                 value={id}
                 onChange={e => setId(e.target.value)}
               />
@@ -48,14 +48,14 @@ export const Login: React.FC<LoginProps> = ({ onLogin, error, title }) => {
           </div>
 
           <div className="space-y-2">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">{t('পাসওয়ার্ড', 'Password')}</label>
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Password</label>
             <div className="relative group">
               <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-accent transition-colors" size={20} />
               <input
                 type="password"
                 required
                 className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent transition-all font-bold text-primary"
-                placeholder={t('পাসওয়ার্ড লিখুন', 'Enter your password')}
+                placeholder="Enter your password"
                 value={pass}
                 onChange={e => setPass(e.target.value)}
               />
@@ -73,7 +73,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin, error, title }) => {
             type="submit"
             className="w-full btn-primary !py-5 rounded-2xl text-lg shadow-xl shadow-accent/20 hover:scale-[1.02] active:scale-95 transition-all"
           >
-            {t('লগইন করুন', 'Login Now')}
+            Login Now
           </button>
         </form>
       </div>

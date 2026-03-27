@@ -67,14 +67,14 @@ export const TrackTicket: React.FC = () => {
           const countersSnap = await getDocs(collection(db, 'counters'));
           setCounters(countersSnap.docs.map(d => ({ id: d.id, ...d.data() } as Counter)));
         } else {
-          setError(t('টিকিট আইডি বা ফোন নম্বর ভুল।', 'Invalid Ticket ID or Phone Number.'));
+          setError('Invalid Ticket ID or Phone Number.');
         }
       } else {
-        setError(t('টিকিট পাওয়া যায়নি।', 'Ticket not found.'));
+        setError('Ticket not found.');
       }
     } catch (err) {
       handleFirestoreError(err, OperationType.GET, 'bookings');
-      setError(t('সার্ভার ত্রুটি। আবার চেষ্টা করুন।', 'Server error. Please try again.'));
+      setError('Server error. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -110,10 +110,10 @@ export const TrackTicket: React.FC = () => {
             animate={{ opacity: 1, y: 0 }}
             className="text-5xl md:text-6xl font-black tracking-tighter text-white"
           >
-            {t('আপনার টিকিট ট্র্যাক করুন', 'Track Your Ticket')}
+            Track Your Ticket
           </motion.h1>
           <p className="text-white/70 text-lg font-medium">
-            {t('টিকিট আইডি এবং ফোন নম্বর দিয়ে আপনার বুকিং ডিটেইলস এবং বাসের অবস্থান দেখুন।', 'Check your booking details and bus location with Ticket ID and Phone Number.')}
+            Check your booking details and bus location with Ticket ID and Phone Number.
           </p>
         </div>
       </section>
@@ -122,7 +122,7 @@ export const TrackTicket: React.FC = () => {
         <div className="card-premium">
           <form onSubmit={handleTrack} className="space-y-6">
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">{t('টিকিট আইডি', 'Ticket ID')}</label>
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Ticket ID</label>
               <div className="relative group">
                 <Ticket className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-accent transition-colors" size={20} />
                 <input 
@@ -137,7 +137,7 @@ export const TrackTicket: React.FC = () => {
             </div>
 
             <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">{t('ফোন নম্বর', 'Phone Number')}</label>
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Phone Number</label>
               <div className="relative group">
                 <Phone className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-accent transition-colors" size={20} />
                 <input 
@@ -159,7 +159,7 @@ export const TrackTicket: React.FC = () => {
               className="btn-primary !py-5 w-full rounded-2xl flex items-center justify-center gap-3 shadow-xl shadow-primary/20 disabled:opacity-50"
             >
               {loading ? <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Search size={20} />}
-              <span className="text-lg">{t('ট্র্যাক করুন', 'Track Ticket')}</span>
+              <span className="text-lg">Track Ticket</span>
             </button>
           </form>
         </div>
@@ -176,7 +176,7 @@ export const TrackTicket: React.FC = () => {
               {/* Ticket Summary */}
               <div className="md:col-span-1 card-premium space-y-6">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-xl font-black text-primary">{t('টিকিট ডিটেইলস', 'Ticket Details')}</h3>
+                  <h3 className="text-xl font-black text-primary">Ticket Details</h3>
                   <span className="bg-emerald-500/10 text-emerald-600 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">
                     {booking.status}
                   </span>
@@ -184,19 +184,19 @@ export const TrackTicket: React.FC = () => {
                 
                 <div className="space-y-4">
                   <div className="flex justify-between">
-                    <span className="text-slate-400 font-bold text-xs uppercase tracking-widest">{t('টিকিট আইডি', 'Ticket ID')}</span>
+                    <span className="text-slate-400 font-bold text-xs uppercase tracking-widest">Ticket ID</span>
                     <span className="text-primary font-bold font-num">{booking.id}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-400 font-bold text-xs uppercase tracking-widest">{t('আসন', 'Seats')}</span>
+                    <span className="text-slate-400 font-bold text-xs uppercase tracking-widest">Seats</span>
                     <span className="text-primary font-bold font-num">{booking.seats.join(', ')}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-400 font-bold text-xs uppercase tracking-widest">{t('ভাড়া', 'Fare')}</span>
+                    <span className="text-slate-400 font-bold text-xs uppercase tracking-widest">Fare</span>
                     <span className="text-primary font-bold font-num">৳ {booking.totalFare}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-400 font-bold text-xs uppercase tracking-widest">{t('তারিখ', 'Date')}</span>
+                    <span className="text-slate-400 font-bold text-xs uppercase tracking-widest">Date</span>
                     <span className="text-primary font-bold font-num">{format(new Date(trip.departureTime), 'dd MMM, yyyy')}</span>
                   </div>
                 </div>
@@ -206,7 +206,7 @@ export const TrackTicket: React.FC = () => {
                   className="w-full py-4 bg-slate-50 text-primary font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-slate-100 transition-all"
                 >
                   <Download size={18} />
-                  {t('টিকিট ডাউনলোড', 'Download Ticket')}
+                  Download Ticket
                 </button>
                 {/* Hidden QR Code for PDF generation */}
                 <div className="hidden">
@@ -218,7 +218,7 @@ export const TrackTicket: React.FC = () => {
               <div className="md:col-span-2 card-premium space-y-8">
                 <h3 className="text-xl font-black text-primary flex items-center gap-3">
                   <Navigation className="text-accent animate-pulse" />
-                  {t('লাইভ বাস ট্র্যাকিং', 'Live Bus Tracking')}
+                  Live Bus Tracking
                 </h3>
 
                 <div className="relative py-12">
@@ -258,7 +258,7 @@ export const TrackTicket: React.FC = () => {
                               </span>
                             ) : isCurrent ? (
                               <span className="text-[10px] text-accent font-bold animate-pulse">
-                                {t('বর্তমান', 'Current')}
+                                Current
                               </span>
                             ) : null}
                           </div>
@@ -274,9 +274,9 @@ export const TrackTicket: React.FC = () => {
                       <BusIcon className="text-accent" />
                     </div>
                     <div>
-                      <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">{t('বাসের অবস্থা', 'Bus Status')}</p>
+                      <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Bus Status</p>
                       <p className="text-lg font-bold text-primary">
-                        {trip.status === 'departed' ? t('বাসটি বর্তমানে পথে আছে।', 'The bus is currently on its way.') : t('বাসটি এখনো যাত্রা শুরু করেনি।', 'The bus has not started its journey yet.')}
+                        {trip.status === 'departed' ? 'The bus is currently on its way.' : 'The bus has not started its journey yet.'}
                       </p>
                     </div>
                   </div>

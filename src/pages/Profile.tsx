@@ -44,16 +44,16 @@ export const Profile: React.FC = () => {
     // Fetch trips and routes for booking details
     const unsubTrips = onSnapshot(collection(db, 'trips'), (snapshot) => {
       setTrips(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Trip)));
-    });
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'trips'));
     const unsubRoutes = onSnapshot(collection(db, 'routes'), (snapshot) => {
       setRoutes(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Route)));
-    });
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'routes'));
     const unsubCounters = onSnapshot(collection(db, 'counters'), (snapshot) => {
       setCounters(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Counter)));
-    });
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'counters'));
     const unsubBuses = onSnapshot(collection(db, 'buses'), (snapshot) => {
       setBuses(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Bus)));
-    });
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'buses'));
 
     return () => {
       unsubscribe();
@@ -90,8 +90,8 @@ export const Profile: React.FC = () => {
       <div className="bg-slate-50 w-24 h-24 rounded-full flex items-center justify-center mx-auto">
         <Shield className="text-slate-300" size={48} />
       </div>
-      <h3 className="text-2xl font-black text-primary">{t('অনুগ্রহ করে লগইন করুন', 'Please Login')}</h3>
-      <p className="text-slate-500">{t('আপনার প্রোফাইল দেখতে এবং টিকিট ম্যানেজ করতে লগইন করুন।', 'Login to view your profile and manage tickets.')}</p>
+      <h3 className="text-2xl font-black text-primary">Please Login</h3>
+      <p className="text-slate-500">Login to view your profile and manage tickets.</p>
     </div>
   );
 
@@ -120,15 +120,15 @@ export const Profile: React.FC = () => {
         {/* Stats */}
         <div className="lg:col-span-1 space-y-8">
           <div className="card-premium space-y-8">
-            <h3 className="text-xl font-black text-primary">{t('একনজরে', 'At a Glance')}</h3>
+            <h3 className="text-xl font-black text-primary">At a Glance</h3>
             <div className="grid grid-cols-2 gap-4">
               <div className="bg-slate-50 p-4 rounded-2xl text-center space-y-1">
                 <p className="text-2xl font-black text-primary">{bookings.length}</p>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{t('মোট বুকিং', 'Total Bookings')}</p>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Total Bookings</p>
               </div>
               <div className="bg-slate-50 p-4 rounded-2xl text-center space-y-1">
                 <p className="text-2xl font-black text-accent">{bookings.filter(b => b.status === 'confirmed').length}</p>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{t('সফল যাত্রা', 'Successful')}</p>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Successful</p>
               </div>
             </div>
             
@@ -136,7 +136,7 @@ export const Profile: React.FC = () => {
               <button className="w-full py-4 px-6 bg-slate-50 text-primary font-bold rounded-xl flex items-center justify-between hover:bg-slate-100 transition-all">
                 <div className="flex items-center gap-3">
                   <User size={18} className="text-accent" />
-                  {t('প্রোফাইল এডিট', 'Edit Profile')}
+                  Edit Profile
                 </div>
                 <ChevronRight size={16} />
               </button>
@@ -146,7 +146,7 @@ export const Profile: React.FC = () => {
               >
                 <div className="flex items-center gap-3">
                   <LogOut size={18} />
-                  {t('লগআউট', 'Logout')}
+                  Logout
                 </div>
                 <ChevronRight size={16} />
               </button>
@@ -159,7 +159,7 @@ export const Profile: React.FC = () => {
           <div className="flex items-center justify-between">
             <h3 className="text-2xl font-black text-primary flex items-center gap-3">
               <History className="text-accent" />
-              {t('বুকিং হিস্টোরি', 'Booking History')}
+              Booking History
             </h3>
           </div>
 
@@ -185,20 +185,20 @@ export const Profile: React.FC = () => {
                           <div className="flex items-center gap-4 text-xs text-slate-400 font-bold uppercase tracking-widest">
                             <span>{trip ? format(new Date(trip.departureTime), 'dd MMM, yyyy') : 'N/A'}</span>
                             <span>•</span>
-                            <span>{booking.seats.length} {t('আসন', 'Seats')}</span>
+                            <span>{booking.seats.length} Seats</span>
                           </div>
                         </div>
                       </div>
 
                       <div className="flex items-center justify-between md:flex-col md:items-end gap-4 border-t md:border-t-0 pt-4 md:pt-0">
                         <div className="text-left md:text-right">
-                          <p className="text-[10px] text-slate-400 uppercase font-black tracking-widest">{t('ভাড়া', 'Fare')}</p>
+                          <p className="text-[10px] text-slate-400 uppercase font-black tracking-widest">Fare</p>
                           <p className="text-xl font-black text-primary">৳ {booking.totalFare}</p>
                         </div>
                         <button 
                           onClick={() => downloadETicket(booking)}
                           className="p-3 bg-slate-50 text-accent rounded-xl hover:bg-accent hover:text-white transition-all shadow-sm"
-                          title={t('টিকিট ডাউনলোড', 'Download Ticket')}
+                          title="Download Ticket"
                         >
                           <Download size={20} />
                         </button>
@@ -216,8 +216,8 @@ export const Profile: React.FC = () => {
                 <div className="bg-slate-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto">
                   <Ticket size={32} className="text-slate-300" />
                 </div>
-                <h3 className="text-xl font-bold text-slate-400">{t('কোনো বুকিং পাওয়া যায়নি', 'No Bookings Found')}</h3>
-                <p className="text-slate-400 text-sm">{t('আপনি এখনো কোনো টিকিট বুক করেননি।', 'You haven\'t booked any tickets yet.')}</p>
+                <h3 className="text-xl font-bold text-slate-400">No Bookings Found</h3>
+                <p className="text-slate-400 text-sm">You haven't booked any tickets yet.</p>
               </div>
             )}
           </div>

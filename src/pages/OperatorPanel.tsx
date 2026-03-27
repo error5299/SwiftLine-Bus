@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
-import { collection, onSnapshot, addDoc, updateDoc, doc, query, where, getDocs, limit, serverTimestamp, setDoc, getDoc } from 'firebase/firestore';
+import { collection, onSnapshot, addDoc, updateDoc, doc, query, where, getDocs, limit, serverTimestamp, setDoc, getDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { Counter, Trip, Booking, Passenger, SeatLock, Route, Bus, Operator, Crew } from '../types';
 import { useLanguage } from '../hooks/useLanguage';
 import { SeatMap } from '../components/SeatMap';
-import { Bus as BusIcon, Search, User, Phone, Mail, Printer, MapPin, Wallet, Clock, CheckCircle2, AlertCircle, Download, CreditCard, LogOut } from 'lucide-react';
+import { Bus as BusIcon, Search, User, Phone, Mail, Printer, MapPin, Wallet, Clock, CheckCircle2, AlertCircle, Download, CreditCard, LogOut, Users, Calendar } from 'lucide-react';
 import { format } from 'date-fns';
 import { Login } from '../components/Login';
 import { QRCodeSVG, QRCodeCanvas } from 'qrcode.react';
@@ -28,20 +28,35 @@ export const OperatorPanel = () => {
   const [passengers, setPassengers] = useState<Passenger[]>([]);
   const [crew, setCrew] = useState<Crew[]>([]);
   const [selectedSeats, setSelectedSeats] = useState<string[]>([]);
-  const [lockedSeats, setLockedSeats] = useState<string[]>([]);
   const [passengerData, setPassengerData] = useState({ name: '', phone: '', email: '', gender: 'male' as 'male' | 'female' });
   const [boardingPoint, setBoardingPoint] = useState('');
   const [droppingPoint, setDroppingPoint] = useState('');
   const [isBooking, setIsBooking] = useState(false);
   const [bookingSuccess, setBookingSuccess] = useState<Booking | null>(null);
 
-  const updateTripCrew = async (role: 'driver' | 'supervisor' | 'helper', crewId: string) => {
+  const [localCrewIds, setLocalCrewIds] = useState<string[]>([]);
+  const [saveStatus, setSaveStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (selectedTrip) {
+      setLocalCrewIds(selectedTrip.crewIds || []);
+    }
+  }, [selectedTrip]);
+
+  useEffect(() => {
+    if (saveStatus) {
+      const timer = setTimeout(() => setSaveStatus(null), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [saveStatus]);
+
+  const updateLocalTripCrew = (role: 'driver' | 'supervisor' | 'helper', crewId: string) => {
     if (!selectedTrip) return;
     
     // Remove old crew with this role
-    let newCrewIds = selectedTrip.crewIds.filter(id => {
-      const c = crew.find(c => c.id === id);
-      return c?.role !== role;
+    let newCrewIds = localCrewIds.filter(id => {
+      const c = crew.find(item => item.id === id);
+      return c?.role?.toLowerCase() !== role.toLowerCase();
     });
     
     // Add new crew
@@ -49,7 +64,13 @@ export const OperatorPanel = () => {
       newCrewIds.push(crewId);
     }
     
-    await updateDoc(doc(db, 'trips', selectedTrip.id), { crewIds: newCrewIds });
+    setLocalCrewIds(newCrewIds);
+  };
+
+  const saveCrew = async () => {
+    if (!selectedTrip) return;
+    await updateDoc(doc(db, 'trips', selectedTrip.id), { crewIds: localCrewIds });
+    setSaveStatus('Saved successfully.');
   };
 
   useEffect(() => {
@@ -160,10 +181,10 @@ export const OperatorPanel = () => {
           setSelectedCounter({ id: counterDoc.id, ...counterDoc.data() } as Counter);
         }
       } else {
-        setLoginError(t('ভুল আইডি বা পাসওয়ার্ড।', 'Invalid ID or Password.'));
+        setLoginError('Invalid ID or Password.');
       }
     } catch (err) {
-      setLoginError(t('লগইন করতে সমস্যা হয়েছে।', 'Error during login.'));
+      setLoginError('Error during login.');
     }
   };
 
@@ -179,7 +200,7 @@ export const OperatorPanel = () => {
   if (!operatorProfile) {
     return (
       <Login 
-        title={t('অপারেটর লগইন', 'Operator Login')} 
+        title="Operator Login" 
         onLogin={handleCustomLogin} 
         error={loginError} 
       />
@@ -204,26 +225,77 @@ export const OperatorPanel = () => {
     }
   };
 
-  const handleSeatClick = (seat: string) => {
+  const handleSeatClick = async (seat: string) => {
+    if (!selectedTrip || !selectedCounter) return;
+
+    // Check if the seat is already booked (not sold)
+    const existingBooking = bookings.find(b => b.seats.includes(seat) && b.status === 'booked');
+    if (existingBooking) {
+      if (window.confirm(`Are you sure you want to unbook seat ${seat}?`)) {
+        try {
+          if (existingBooking.seats.length === 1) {
+            await updateDoc(doc(db, 'bookings', existingBooking.id), { status: 'cancelled' });
+          } else {
+            const newSeats = existingBooking.seats.filter(s => s !== seat);
+            await updateDoc(doc(db, 'bookings', existingBooking.id), { seats: newSeats });
+          }
+        } catch (error) {
+          console.error("Error unbooking seat:", error);
+          alert("Failed to unbook seat.");
+        }
+      }
+      return;
+    }
+
     if (selectedSeats.includes(seat)) {
       setSelectedSeats(prev => prev.filter(s => s !== seat));
+      // Remove lock
+      try {
+        const lockToRemove = selectedTrip.lockedSeats?.find(l => l.seatId === seat && l.counterId === selectedCounter.id);
+        if (lockToRemove) {
+          await updateDoc(doc(db, 'trips', selectedTrip.id), {
+            lockedSeats: arrayRemove(lockToRemove)
+          });
+        }
+      } catch (e) {
+        console.error("Failed to remove lock", e);
+      }
     } else {
       if (selectedSeats.length < 4) {
+        // Check if it's already locked by someone else
+        const isLockedByOther = selectedTrip.lockedSeats?.some(l => l.seatId === seat && l.counterId !== selectedCounter.id && (Date.now() - new Date(l.timestamp).getTime() < 5 * 60000));
+        if (isLockedByOther) {
+          alert('Seat is currently being booked by another counter');
+          return;
+        }
+
         setSelectedSeats(prev => [...prev, seat]);
+        // Add lock
+        try {
+          await updateDoc(doc(db, 'trips', selectedTrip.id), {
+            lockedSeats: arrayUnion({
+              seatId: seat,
+              counterId: selectedCounter.id,
+              timestamp: new Date().toISOString()
+            })
+          });
+        } catch (e) {
+          console.error("Failed to add lock", e);
+        }
       } else {
         alert('Maximum 4 seats per booking');
       }
     }
   };
 
-  const handleBooking = async () => {
+  const handleBooking = async (action: 'book' | 'sell') => {
     if (!selectedTrip || !selectedCounter || selectedSeats.length === 0 || !passengerData.name || !passengerData.phone || !boardingPoint || !droppingPoint) {
       alert('Please fill all required fields');
       return;
     }
 
     const totalFare = selectedSeats.length * selectedTrip.fare;
-    if (selectedCounter.walletBalance < totalFare) {
+    if (action === 'sell' && selectedCounter.walletBalance < totalFare) {
       alert('Insufficient wallet balance');
       return;
     }
@@ -249,27 +321,43 @@ export const OperatorPanel = () => {
         passengerId,
         seats: selectedSeats,
         gender: passengerData.gender,
+        withCounter: true,
         boardingStopId: boardingPoint,
         droppingStopId: droppingPoint,
         totalFare,
         timestamp: new Date().toISOString(),
-        status: 'confirmed',
+        status: action === 'sell' ? 'sold' : 'booked',
         bookedByCounterId: selectedCounter.id
       };
       
       await setDoc(doc(db, 'bookings', ticketId), bookingData);
 
-      // 3. Update Wallet
-      await updateDoc(doc(db, 'counters', selectedCounter.id), {
-        walletBalance: selectedCounter.walletBalance - totalFare
-      });
-      await addDoc(collection(db, 'walletTransactions'), {
-        counterId: selectedCounter.id,
-        amount: -totalFare,
-        type: 'booking',
-        timestamp: new Date().toISOString(),
-        description: `Booking ${ticketId} for ${selectedSeats.join(', ')}`
-      });
+      // 3. Update Wallet (only if sold)
+      if (action === 'sell') {
+        await updateDoc(doc(db, 'counters', selectedCounter.id), {
+          walletBalance: selectedCounter.walletBalance - totalFare
+        });
+        await addDoc(collection(db, 'walletTransactions'), {
+          counterId: selectedCounter.id,
+          amount: -totalFare,
+          type: 'booking',
+          timestamp: new Date().toISOString(),
+          description: `Booking ${ticketId} for ${selectedSeats.join(', ')}`,
+          status: 'completed'
+        });
+      }
+
+      // 4. Remove locks
+      try {
+        const locksToRemove = selectedTrip.lockedSeats?.filter(l => selectedSeats.includes(l.seatId) && l.counterId === selectedCounter.id) || [];
+        if (locksToRemove.length > 0) {
+          await updateDoc(doc(db, 'trips', selectedTrip.id), {
+            lockedSeats: arrayRemove(...locksToRemove)
+          });
+        }
+      } catch (e) {
+        console.error("Failed to remove locks", e);
+      }
 
       setBookingSuccess(bookingData);
       setSelectedSeats([]);
@@ -308,7 +396,7 @@ export const OperatorPanel = () => {
         receivedAt: new Date().toISOString(),
         receivedBy: operatorProfile?.name
       });
-      alert(t('বাসটি সফলভাবে রিসিভ করা হয়েছে।', 'Bus received successfully.'));
+      alert('Bus received successfully.');
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, 'trips/receive');
     }
@@ -341,15 +429,15 @@ export const OperatorPanel = () => {
     <div className="space-y-8">
       <div className="flex justify-between items-center mb-8">
         <div>
-          <h1 className="text-3xl font-bold text-slate-900">{t('কাউন্টার ড্যাশবোর্ড', 'Counter Dashboard')}</h1>
-          <p className="text-slate-500">{operatorProfile?.name} | {selectedCounter?.name}</p>
+          <h1 className="text-3xl font-black uppercase tracking-tighter text-slate-900">Counter Dashboard</h1>
+          <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mt-1">{operatorProfile?.name} | {selectedCounter?.name}</p>
         </div>
         <button 
           onClick={handleLogout}
           className="flex items-center gap-2 px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
         >
           <LogOut size={20} />
-          <span>{t('লগআউট', 'Logout')}</span>
+          <span>Logout</span>
         </button>
       </div>
 
@@ -358,9 +446,9 @@ export const OperatorPanel = () => {
       <div className="lg:col-span-8 space-y-6">
         <div className="card">
           <div className="flex justify-between items-center mb-6">
-            <h2 className="text-xl font-bold flex items-center gap-2">
-              <BusIcon className="text-primary" />
-              {t('টিকিট বুকিং কাউন্টার', 'Ticket Booking POS')}
+            <h2 className="text-xl font-black uppercase tracking-tight flex items-center gap-2">
+              <BusIcon className="text-accent" />
+              Ticket Booking POS
             </h2>
             <div className="flex items-center gap-3 bg-slate-50 px-4 py-2 rounded-full border border-slate-100">
               <Wallet className="text-emerald-600" size={18} />
@@ -371,28 +459,28 @@ export const OperatorPanel = () => {
           </div>
 
           <div className="mb-8">
-            <label className="block text-sm font-medium text-slate-500 mb-1">{t('তারিখ নির্বাচন করুন', 'Select Date')}</label>
+            <label className="block text-sm font-medium text-slate-500 mb-1">Select Date</label>
             <div className="relative">
               <input 
                 type="date" 
                 id="operator-date-input"
-                className="w-full px-4 py-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-primary cursor-pointer"
+                className="w-full px-4 py-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-accent cursor-pointer font-bold text-slate-700"
                 value={selectedDate}
                 onChange={e => {
                   setSelectedDate(e.target.value);
                   setSelectedTrip(null);
                 }}
-                onClick={() => document.getElementById('operator-date-input')?.showPicker()}
+                onClick={() => (document.getElementById('operator-date-input') as HTMLInputElement)?.showPicker()}
               />
             </div>
           </div>
 
           {!selectedTrip ? (
             <div className="space-y-4">
-              <h3 className="font-bold text-slate-700 mb-4">{t('উপলব্ধ ট্রিপসমূহ', 'Available Trips')}</h3>
+              <h3 className="font-bold text-slate-700 mb-4">Available Trips</h3>
               {filteredTrips.length === 0 ? (
                 <div className="text-center py-8 bg-slate-50 rounded-xl border border-slate-100">
-                  <p className="text-slate-500">{t('এই তারিখে কোনো ট্রিপ নেই।', 'No trips available on this date.')}</p>
+                  <p className="text-slate-500">No trips available on this date.</p>
                 </div>
               ) : (
                 <div className="grid gap-4">
@@ -400,22 +488,22 @@ export const OperatorPanel = () => {
                     const route = routes.find(r => r.id === trip.routeId);
                     const bus = buses.find(b => b.id === trip.busId);
                     return (
-                      <div 
-                        key={trip.id}
-                        onClick={() => setSelectedTrip(trip)}
-                        className="bg-white p-4 rounded-xl border border-slate-200 hover:border-primary hover:shadow-md transition-all cursor-pointer flex justify-between items-center"
-                      >
-                        <div>
-                          <h4 className="font-bold text-slate-800 text-lg">{route?.name}</h4>
-                          <div className="flex items-center gap-4 text-sm text-slate-500 mt-1">
-                            <span className="flex items-center gap-1"><Clock size={14} /> {format(new Date(trip.departureTime), 'hh:mm a')}</span>
-                            <span className="flex items-center gap-1"><BusIcon size={14} /> {bus?.isAC ? 'AC' : 'Non-AC'} ({trip.coachNumber})</span>
+                        <div 
+                          key={trip.id}
+                          onClick={() => setSelectedTrip(trip)}
+                          className="bg-white p-4 rounded-xl border border-slate-200 hover:border-accent hover:shadow-md transition-all cursor-pointer flex justify-between items-center group"
+                        >
+                          <div>
+                            <h4 className="font-black uppercase tracking-tight text-slate-800 text-lg">{route?.name}</h4>
+                            <div className="flex items-center gap-4 text-xs font-bold text-slate-500 mt-1 uppercase tracking-wider">
+                              <span className="flex items-center gap-1"><Clock size={14} /> {format(new Date(trip.departureTime), 'hh:mm a')}</span>
+                              <span className="flex items-center gap-1"><BusIcon size={14} /> {bus?.isAC ? 'AC' : 'Non-AC'} ({trip.coachNumber})</span>
+                            </div>
                           </div>
+                          <button className="px-4 py-2 bg-accent/10 text-accent font-black uppercase tracking-widest text-[10px] rounded-lg group-hover:bg-accent group-hover:text-white transition-colors">
+                            Select
+                          </button>
                         </div>
-                        <button className="px-4 py-2 bg-primary/10 text-primary font-bold rounded-lg group-hover:bg-primary group-hover:text-white transition-colors">
-                          {t('নির্বাচন করুন', 'Select')}
-                        </button>
-                      </div>
                     );
                   })}
                 </div>
@@ -425,45 +513,52 @@ export const OperatorPanel = () => {
             <div className="space-y-6">
               <div className="flex justify-between items-center bg-slate-50 p-4 rounded-xl border border-slate-100">
                 <div>
-                  <h3 className="font-bold text-slate-800">{routes.find(r => r.id === selectedTrip.routeId)?.name}</h3>
-                  <p className="text-sm text-slate-500">{format(new Date(selectedTrip.departureTime), 'hh:mm a')} | Coach: {selectedTrip.coachNumber}</p>
+                  <h3 className="font-black text-slate-800 uppercase tracking-tight">{routes.find(r => r.id === selectedTrip.routeId)?.name}</h3>
+                  <p className="text-sm text-slate-500 font-medium">{format(new Date(selectedTrip.departureTime), 'hh:mm a')} | Coach: {selectedTrip.coachNumber}</p>
                 </div>
                 <button 
                   onClick={() => setSelectedTrip(null)}
-                  className="px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50"
+                  className="px-4 py-2 text-sm font-bold text-accent bg-white border border-accent/20 rounded-xl hover:bg-accent/5 transition-all"
                 >
-                  {t('পরিবর্তন করুন', 'Change')}
+                  Change
                 </button>
               </div>
               
               <div className="grid md:grid-cols-2 gap-8">
                 <SeatMap
-                capacity={buses.find(b => b.id === selectedTrip.busId)?.capacity || 40}
-                bookedSeats={bookings.flatMap(b => b.seats)}
-                femaleBookedSeats={bookings.filter(b => b.gender === 'female').flatMap(b => b.seats)}
-                selectedSeats={selectedSeats}
-                lockedSeats={lockedSeats}
-                onSeatClick={handleSeatClick}
-                bookings={bookings}
-                passengers={passengers}
-                onReprint={(booking) => {
-                  setBookingSuccess(booking);
-                }}
-              />
-
-              <div className="space-y-6">
-                <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 space-y-4">
-                  <h3 className="font-bold text-slate-700 flex items-center gap-2">
+                  capacity={buses.find(b => b.id === selectedTrip.busId)?.capacity || 40}
+                  bookedSeats={bookings.filter(b => b.status === 'booked').flatMap(b => b.seats)}
+                  femaleBookedSeats={bookings.filter(b => b.status === 'booked').filter(b => {
+                    const p = passengers.find(pass => pass.id === b.passengerId);
+                    return p?.gender === 'female';
+                  }).flatMap(b => b.seats)}
+                  soldSeats={bookings.filter(b => b.status === 'sold' || b.status === 'confirmed').flatMap(b => b.seats)}
+                  femaleSoldSeats={bookings.filter(b => b.status === 'sold' || b.status === 'confirmed').filter(b => {
+                    const p = passengers.find(pass => pass.id === b.passengerId);
+                    return p?.gender === 'female';
+                  }).flatMap(b => b.seats)}
+                  selectedSeats={selectedSeats}
+                  lockedSeats={selectedTrip.lockedSeats?.filter(l => l.counterId !== selectedCounter?.id && (Date.now() - new Date(l.timestamp).getTime() < 5 * 60000)).map(l => l.seatId) || []}
+                  onSeatClick={handleSeatClick}
+                  bookings={bookings}
+                  passengers={passengers}
+                  counters={counters}
+                  isOperator={true}
+                />
+                
+                <div className="space-y-6">
+                  <div className="bg-accent/5 p-6 rounded-[24px] border border-accent/10 space-y-4">
+                  <h3 className="font-black text-accent flex items-center gap-2 uppercase text-sm tracking-wider">
                     <User size={18} />
-                    {t('যাত্রীর তথ্য', 'Passenger Info')}
+                    Passenger Info
                   </h3>
                   <div className="space-y-3">
                     <div className="relative">
                       <Phone className="absolute left-3 top-2.5 text-slate-400" size={18} />
                       <input
                         type="tel"
-                        placeholder={t('মোবাইল নম্বর', 'Mobile Number')}
-                        className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-primary"
+                        placeholder="Mobile Number"
+                        className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent font-medium"
                         value={passengerData.phone}
                         onChange={e => handlePhoneChange(e.target.value)}
                       />
@@ -472,27 +567,27 @@ export const OperatorPanel = () => {
                       <User className="absolute left-3 top-2.5 text-slate-400" size={18} />
                       <input
                         type="text"
-                        placeholder={t('নাম', 'Full Name')}
-                        className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-primary"
+                        placeholder="Full Name"
+                        className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent font-medium"
                         value={passengerData.name}
                         onChange={e => setPassengerData({ ...passengerData, name: e.target.value })}
                       />
                     </div>
                     <div className="grid grid-cols-2 gap-3">
                       <select
-                        className="w-full px-4 py-2 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-primary"
+                        className="w-full px-4 py-2 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent font-medium"
                         value={passengerData.gender}
                         onChange={e => setPassengerData({ ...passengerData, gender: e.target.value as 'male' | 'female' })}
                       >
-                        <option value="male">{t('পুরুষ', 'Male')}</option>
-                        <option value="female">{t('মহিলা', 'Female')}</option>
+                        <option value="male">Male</option>
+                        <option value="female">Female</option>
                       </select>
                       <div className="relative">
                         <Mail className="absolute left-3 top-2.5 text-slate-400" size={18} />
                         <input
                           type="email"
-                          placeholder={t('イমেইল', 'Email')}
-                          className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-primary"
+                          placeholder="Email"
+                          className="w-full pl-10 pr-4 py-2 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent font-medium"
                           value={passengerData.email}
                           onChange={e => setPassengerData({ ...passengerData, email: e.target.value })}
                         />
@@ -501,33 +596,86 @@ export const OperatorPanel = () => {
                   </div>
                 </div>
 
-                <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 space-y-4">
-                  <h3 className="font-bold text-slate-700 flex items-center gap-2">
+                <div className="bg-slate-50 p-6 rounded-[24px] border border-slate-100 space-y-4">
+                  <h3 className="font-black text-slate-700 flex items-center gap-2 uppercase text-sm tracking-wider">
+                    <Users size={18} />
+                    Select Crew
+                  </h3>
+                  <div className="space-y-3">
+                    <select 
+                      className="w-full p-2 border border-slate-200 rounded-xl font-medium focus:ring-2 focus:ring-accent/50 focus:border-accent outline-none disabled:bg-slate-100 disabled:text-slate-500" 
+                      value={localCrewIds.find(id => {
+                        const c = crew.find(item => item.id === id);
+                        return c?.role?.toLowerCase() === 'driver';
+                      }) || ''}
+                      onChange={(e) => updateLocalTripCrew('driver', e.target.value)}
+                      disabled={!!selectedTrip?.crewIds && selectedTrip.crewIds.length > 0}
+                    >
+                      <option value="">Select Driver</option>
+                      {crew.filter(c => c.role?.toLowerCase() === 'driver').map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                    <select 
+                      className="w-full p-2 border border-slate-200 rounded-xl font-medium focus:ring-2 focus:ring-accent/50 focus:border-accent outline-none disabled:bg-slate-100 disabled:text-slate-500" 
+                      value={localCrewIds.find(id => {
+                        const c = crew.find(item => item.id === id);
+                        return c?.role?.toLowerCase() === 'supervisor';
+                      }) || ''}
+                      onChange={(e) => updateLocalTripCrew('supervisor', e.target.value)}
+                      disabled={!!selectedTrip?.crewIds && selectedTrip.crewIds.length > 0}
+                    >
+                      <option value="">Select Supervisor</option>
+                      {crew.filter(c => c.role?.toLowerCase() === 'supervisor').map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                    <select 
+                      className="w-full p-2 border border-slate-200 rounded-xl font-medium focus:ring-2 focus:ring-accent/50 focus:border-accent outline-none disabled:bg-slate-100 disabled:text-slate-500" 
+                      value={localCrewIds.find(id => {
+                        const c = crew.find(item => item.id === id);
+                        return c?.role?.toLowerCase() === 'helper';
+                      }) || ''}
+                      onChange={(e) => updateLocalTripCrew('helper', e.target.value)}
+                      disabled={!!selectedTrip?.crewIds && selectedTrip.crewIds.length > 0}
+                    >
+                      <option value="">Select Helper</option>
+                      {crew.filter(c => c.role?.toLowerCase() === 'helper').map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                    {(!selectedTrip?.crewIds || selectedTrip.crewIds.length === 0) && (
+                      <button onClick={saveCrew} className="w-full py-3 bg-accent text-white font-black rounded-xl hover:bg-accent/90 shadow-lg shadow-accent/20 transition-all uppercase tracking-wider text-sm">
+                        Save
+                      </button>
+                    )}
+                    {saveStatus && (
+                      <p className="text-accent text-sm font-bold text-center mt-2">{saveStatus}</p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 p-6 rounded-[24px] border border-slate-100 space-y-4">
+                  <h3 className="font-black text-slate-700 flex items-center gap-2 uppercase text-sm tracking-wider">
                     <MapPin size={18} />
-                    {t('যাত্রা বিরতি', 'Stop Points')}
+                    Stop Points
                   </h3>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="text-[10px] font-bold text-slate-400 uppercase">{t('বোর্ডিং', 'Boarding')}</label>
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Boarding</label>
                       <select
-                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                        className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-accent/50 focus:border-accent outline-none"
                         value={boardingPoint}
                         onChange={e => setBoardingPoint(e.target.value)}
                       >
-                        <option value="">{t('বাছাই করুন', 'Select')}</option>
+                        <option value="">Select</option>
                         {selectedTrip.boardingPoints?.map(id => (
                           <option key={id} value={id}>{counters.find(c => c.id === id)?.name}</option>
                         ))}
                       </select>
                     </div>
                     <div>
-                      <label className="text-[10px] font-bold text-slate-400 uppercase">{t('ড্রপিং', 'Dropping')}</label>
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Dropping</label>
                       <select
-                        className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                        className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-accent/50 focus:border-accent outline-none"
                         value={droppingPoint}
                         onChange={e => setDroppingPoint(e.target.value)}
                       >
-                        <option value="">{t('বাছাই করুন', 'Select')}</option>
+                        <option value="">Select</option>
                         {selectedTrip.droppingPoints?.filter(id => 
                           selectedCounter?.allowedDestinationCounters?.includes(id)
                         ).map(id => (
@@ -538,48 +686,58 @@ export const OperatorPanel = () => {
                   </div>
                 </div>
 
-                <div className="bg-primary/5 p-6 rounded-2xl border border-primary/10 space-y-4">
+                <div className="bg-accent/10 p-6 rounded-[32px] border border-accent/20 space-y-4">
                   <div className="flex justify-between items-center">
-                    <span className="text-slate-600 font-medium">{t('নির্বাচিত আসন', 'Selected Seats')}</span>
-                    <span className="font-black text-primary tracking-wider">{selectedSeats.join(', ') || 'None'}</span>
+                    <span className="text-slate-600 font-bold">Selected Seats</span>
+                    <span className="font-black text-accent tracking-widest text-lg">{selectedSeats.join(', ') || 'None'}</span>
                   </div>
-                  <div className="flex justify-between items-center text-lg">
-                    <span className="font-bold">{t('মোট ভাড়া', 'Total Fare')}</span>
-                    <span className="font-black text-primary">৳ {(selectedSeats.length * selectedTrip.fare).toLocaleString()}</span>
+                  <div className="flex justify-between items-center text-xl">
+                    <span className="font-black text-slate-800 uppercase tracking-tight">Total Fare</span>
+                    <span className="font-black text-accent">৳ {(selectedSeats.length * selectedTrip.fare).toLocaleString()}</span>
                   </div>
-                  <button
-                    disabled={isBooking || selectedSeats.length === 0}
-                    onClick={handleBooking}
-                    className="w-full btn-primary py-4 flex items-center justify-center gap-3 disabled:opacity-50 shadow-lg shadow-primary/20"
-                  >
-                    <CreditCard size={20} />
-                    {isBooking ? t('প্রক্রিয়াকরণ হচ্ছে...', 'Processing...') : t('টিকিট নিশ্চিত করুন', 'Confirm Booking')}
-                  </button>
+                  <div className="flex gap-4">
+                    <button
+                      disabled={isBooking || selectedSeats.length === 0}
+                      onClick={() => handleBooking('book')}
+                      className="flex-1 bg-slate-800 text-white py-4 flex items-center justify-center gap-3 disabled:opacity-50 shadow-xl shadow-slate-800/30 rounded-2xl font-black uppercase tracking-widest hover:bg-slate-700 transition-all"
+                    >
+                      <CreditCard size={20} />
+                      {isBooking ? 'Processing...' : 'Book'}
+                    </button>
+                    <button
+                      disabled={isBooking || selectedSeats.length === 0}
+                      onClick={() => handleBooking('sell')}
+                      className="flex-1 bg-accent text-white py-4 flex items-center justify-center gap-3 disabled:opacity-50 shadow-xl shadow-accent/30 rounded-2xl font-black uppercase tracking-widest hover:bg-accent/90 transition-all"
+                    >
+                      <CreditCard size={20} />
+                      {isBooking ? 'Processing...' : 'Sell'}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
-            </div>
-          )}
-        </div>
+          </div>
+        )}
+      </div>
 
         {bookingSuccess && (
-          <div className="card-premium border-emerald-200 bg-emerald-50/30">
+          <div className="card-premium border-accent/20 bg-accent/5">
             <div className="flex flex-col md:flex-row items-center gap-8">
-              <div className="bg-white p-4 rounded-2xl shadow-sm border border-emerald-100">
+              <div className="bg-white p-4 rounded-[24px] shadow-sm border border-accent/10">
                 <QRCodeCanvas id="ticket-qrcode" value={bookingSuccess.id} size={120} />
               </div>
               <div className="flex-1 space-y-4 text-center md:text-left">
                 <div>
-                  <h3 className="text-2xl font-black text-emerald-800">{t('বুকিং সফল!', 'Booking Success!')}</h3>
-                  <p className="text-emerald-600 font-bold">{t('টিকিট আইডি:', 'Ticket ID:')} {bookingSuccess.id}</p>
+                  <h3 className="text-2xl font-black text-accent uppercase tracking-tight">Booking Success!</h3>
+                  <p className="text-slate-600 font-bold">Ticket ID: <span className="text-accent">{bookingSuccess.id}</span></p>
                 </div>
                 <div className="flex flex-wrap gap-3 justify-center md:justify-start">
-                  <button onClick={printTicket} className="btn-primary bg-emerald-600 hover:bg-emerald-700 flex items-center gap-2">
+                  <button onClick={printTicket} className="bg-accent text-white px-6 py-3 rounded-xl font-black uppercase tracking-widest flex items-center gap-2 hover:bg-accent/90 transition-all shadow-lg shadow-accent/20">
                     <Printer size={18} />
-                    {t('প্রিন্ট টিকিট', 'Print Ticket')}
+                    Print Ticket
                   </button>
-                  <button onClick={() => setBookingSuccess(null)} className="px-6 py-2 bg-white border border-emerald-200 text-emerald-700 font-bold rounded-xl hover:bg-emerald-100 transition-all">
-                    {t('নতুন বুকিং', 'New Booking')}
+                  <button onClick={() => setBookingSuccess(null)} className="px-6 py-3 bg-white border border-accent/20 text-accent font-black rounded-xl hover:bg-accent/5 transition-all uppercase tracking-widest">
+                    New Booking
                   </button>
                 </div>
               </div>
@@ -591,10 +749,10 @@ export const OperatorPanel = () => {
       {/* Right Column: Live Trips */}
       <div className="lg:col-span-4 space-y-6">
         {/* Incoming Trips Section */}
-        <div className="card">
-          <h3 className="text-lg font-bold mb-6 flex items-center gap-2">
-            <Clock className="text-primary" />
-            {t('আগত বাসসমূহ', 'Incoming Buses')}
+        <div className="card-premium">
+          <h3 className="text-lg font-black mb-6 flex items-center gap-2 text-slate-800 uppercase tracking-tight">
+            <Clock className="text-accent" />
+            Incoming Buses
           </h3>
           <div className="space-y-4">
             {trips
@@ -607,22 +765,22 @@ export const OperatorPanel = () => {
               .map(trip => {
                 const route = routes.find(r => r.id === trip.routeId);
                 return (
-                  <div key={trip.id} className="p-4 bg-slate-50 rounded-xl border border-slate-100">
+                  <div key={trip.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
                     <div className="flex justify-between items-start mb-2">
                       <div>
-                        <p className="font-bold text-slate-900">{route?.name}</p>
-                        <p className="text-xs text-slate-500">{trip.coachNumber}</p>
+                        <p className="font-black text-slate-900 uppercase tracking-tight">{route?.name}</p>
+                        <p className="text-xs text-slate-500 font-bold">{trip.coachNumber}</p>
                       </div>
-                      <span className="px-2 py-1 bg-blue-100 text-blue-700 text-[10px] font-bold rounded-full uppercase">
+                      <span className="px-2 py-1 bg-accent/10 text-accent text-[10px] font-black rounded-full uppercase tracking-wider">
                         {trip.status}
                       </span>
                     </div>
                     <button
                       onClick={() => handleReceiveBus(trip.id)}
-                      className="w-full mt-2 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2 text-sm font-medium"
+                      className="w-full mt-2 py-2 bg-accent text-white rounded-xl hover:bg-accent/90 transition-all flex items-center justify-center gap-2 text-sm font-black uppercase tracking-widest shadow-lg shadow-accent/10"
                     >
                       <CheckCircle2 size={16} />
-                      {t('রিসিভ করুন', 'Receive Bus')}
+                      Receive Bus
                     </button>
                   </div>
                 );
@@ -633,33 +791,33 @@ export const OperatorPanel = () => {
               const lastStop = route.stops[route.stops.length - 1];
               return lastStop.counterId === selectedCounter.id && trip.status === 'departed';
             }).length === 0 && (
-              <p className="text-center text-slate-400 py-4 text-sm italic">
-                {t('কোন আগত বাস নেই', 'No incoming buses')}
+              <p className="text-center text-slate-400 py-4 text-sm font-bold italic">
+                No incoming buses
               </p>
             )}
           </div>
         </div>
 
-        <div className="card">
-          <h3 className="text-lg font-bold mb-6 flex items-center gap-2">
-            <Clock className="text-primary" />
-            {t('লাইভ ট্রিপ আপডেট', 'Live Trip Updates')}
+        <div className="card-premium">
+          <h3 className="text-lg font-black mb-6 flex items-center gap-2 text-slate-800 uppercase tracking-tight">
+            <Clock className="text-accent" />
+            Live Trip Updates
           </h3>
           <div className="space-y-4">
-            {trips.filter(t => t.status !== 'arrived').map(trip => {
+            {trips.filter(t => t.status !== 'arrived' && format(new Date(t.departureTime), 'yyyy-MM-dd') === selectedDate).map(trip => {
               const route = routes.find(r => r.id === trip.routeId);
               const isDepartedFromHere = trip.stopLogs?.some(log => log.counterId === selectedCounter?.id);
 
               return (
-                <div key={trip.id} className="p-4 border border-slate-100 rounded-xl hover:bg-slate-50 transition-colors">
+                <div key={trip.id} className="p-4 border border-slate-100 rounded-2xl hover:bg-accent/5 transition-all group">
                   <div className="flex justify-between items-start mb-3">
                     <div>
-                      <h4 className="font-bold text-slate-800">{route?.name}</h4>
-                      <p className="text-xs text-slate-500">{format(new Date(trip.departureTime), 'hh:mm a, dd MMM')}</p>
+                      <h4 className="font-black text-slate-800 uppercase tracking-tight group-hover:text-accent transition-colors">{route?.name}</h4>
+                      <p className="text-xs text-slate-500 font-bold">{format(new Date(trip.departureTime), 'hh:mm a, dd MMM')}</p>
                     </div>
                     <span className={cn(
-                      "text-[10px] font-bold px-2 py-0.5 rounded-full uppercase",
-                      trip.status === 'departed' ? "bg-emerald-100 text-emerald-700" : "bg-blue-100 text-blue-700"
+                      "text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider",
+                      trip.status === 'departed' ? "bg-accent/10 text-accent" : "bg-blue-100 text-blue-700"
                     )}>
                       {trip.status}
                     </span>
@@ -667,9 +825,9 @@ export const OperatorPanel = () => {
                   <button
                     disabled={!selectedCounter || isDepartedFromHere}
                     onClick={() => handleDeparted(trip.id)}
-                    className="w-full py-2 bg-white border border-slate-200 rounded-lg text-sm font-bold text-slate-700 hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:bg-slate-50"
+                    className="w-full py-2 bg-white border border-slate-200 rounded-xl text-sm font-black text-slate-700 hover:bg-accent hover:text-white hover:border-accent transition-all disabled:opacity-50 disabled:bg-slate-50 uppercase tracking-widest"
                   >
-                    {isDepartedFromHere ? t('ছেড়ে গেছে', 'Already Departed') : t('বাস ছেড়ে গেছে', 'Bus Departed')}
+                    {isDepartedFromHere ? 'Already Departed' : 'Bus Departed'}
                   </button>
                 </div>
               );

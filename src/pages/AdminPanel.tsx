@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { collection, onSnapshot, addDoc, updateDoc, doc, deleteDoc, query, orderBy, setDoc, serverTimestamp, where, getDocs } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
@@ -16,6 +17,7 @@ import { formatInTimeZone } from 'date-fns-tz';
 const TZ = 'Asia/Dhaka';
 
 export const AdminPanel = () => {
+  const navigate = useNavigate();
   const { t } = useLanguage();
   const [activeTab, setActiveTab] = useState<'dashboard' | 'tracking' | 'counters' | 'operators' | 'routes' | 'fleet' | 'crew' | 'passengers' | 'trips' | 'tripHistory' | 'tripCounterTimes' | 'security'>('dashboard');
   const [searchTerm, setSearchTerm] = useState('');
@@ -38,8 +40,10 @@ export const AdminPanel = () => {
   const [deleteConfirm, setDeleteConfirm] = useState<{ collection: string, id: string } | null>(null);
   const [routeStops, setRouteStops] = useState<RouteStop[]>([]);
   const [selectedTrip, setSelectedTrip] = useState<Trip | null>(null);
+  const [selectedCounterId, setSelectedCounterId] = useState<string>('');
   const [selectedTripForBookings, setSelectedTripForBookings] = useState<Trip | null>(null);
   const [selectedDate, setSelectedDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
+  const [dashboardDate, setDashboardDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
 
   // Stats for Dashboard
   const stats = {
@@ -199,12 +203,12 @@ export const AdminPanel = () => {
     setPasswordSuccess('');
     
     if (newPassword !== confirmPassword) {
-      setPasswordError(t('পাসওয়ার্ড মিলছে না', 'Passwords do not match'));
+      setPasswordError('Passwords do not match');
       return;
     }
     
     if (newPassword.length < 6) {
-      setPasswordError(t('পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে', 'Password must be at least 6 characters'));
+      setPasswordError('Password must be at least 6 characters');
       return;
     }
     
@@ -212,7 +216,7 @@ export const AdminPanel = () => {
       if (user && user.id) {
         const adminRef = doc(db, 'admins', user.id);
         await updateDoc(adminRef, { password: newPassword });
-        setPasswordSuccess(t('পাসওয়ার্ড সফলভাবে পরিবর্তন করা হয়েছে', 'Password changed successfully'));
+        setPasswordSuccess('Password changed successfully');
         setNewPassword('');
         setConfirmPassword('');
         
@@ -223,7 +227,7 @@ export const AdminPanel = () => {
       }
     } catch (error) {
       console.error('Error changing password:', error);
-      setPasswordError(t('পাসওয়ার্ড পরিবর্তন করতে সমস্যা হয়েছে', 'Failed to change password'));
+      setPasswordError('Failed to change password');
     }
   };
 
@@ -248,11 +252,11 @@ export const AdminPanel = () => {
           setIsAdmin(true);
           localStorage.setItem('admin_session', JSON.stringify(adminData));
         } else {
-          setLoginError(t('ভুল আইডি বা পাসওয়ার্ড।', 'Invalid ID or Password.'));
+          setLoginError('Invalid ID or Password.');
         }
       }
     } catch (err) {
-      setLoginError(t('লগইন করতে সমস্যা হয়েছে।', 'Error during login.'));
+      setLoginError('Error during login.');
     }
   };
 
@@ -267,7 +271,7 @@ export const AdminPanel = () => {
   if (!isAdmin) {
     return (
       <Login 
-        title={t('অ্যাডমিন লগইন', 'Admin Login')} 
+        title="Admin Login" 
         onLogin={handleCustomLogin} 
         error={loginError} 
       />
@@ -336,6 +340,7 @@ export const AdminPanel = () => {
           busId: formData.get('busId') as string,
           date: formData.get('date') as string,
           baseDepartureTime: formData.get('baseDepartureTime') as string,
+          arrivalTime: formData.get('arrivalTime') as string,
           departureTime: `${formData.get('date')}T${formData.get('baseDepartureTime')}`,
           fare: Number(formData.get('fare')) || 500,
           status: 'scheduled',
@@ -371,7 +376,7 @@ export const AdminPanel = () => {
       } else if (activeTab === 'crew') {
         data = {
           name: formData.get('name') as string,
-          role: formData.get('role') as string,
+          role: (formData.get('role') as string).toLowerCase() as 'driver' | 'supervisor' | 'helper',
           phone: formData.get('phone') as string,
           email: formData.get('email') as string,
           customId: formData.get('customId') as string,
@@ -402,7 +407,7 @@ export const AdminPanel = () => {
         const docRef = { id };
         
         // If it's an operator or supervisor, we might want to pre-provision their role
-        if (activeTab === 'operators' || (activeTab === 'crew' && data.role === 'Supervisor')) {
+        if (activeTab === 'operators' || (activeTab === 'crew' && data.role === 'supervisor')) {
           // We can't set the 'users' doc yet because we don't have their UID
           // But we can store the email mapping
           await setDoc(doc(db, 'staff_emails', data.email), {
@@ -411,7 +416,7 @@ export const AdminPanel = () => {
           });
           
           // Save credentials for custom ID login
-          if (activeTab === 'operators' || (activeTab === 'crew' && data.role === 'Supervisor')) {
+          if (activeTab === 'operators' || (activeTab === 'crew' && data.role === 'supervisor')) {
             await setDoc(doc(db, 'staff_credentials', docRef.id), {
               id: data.customId,
               password: data.password,
@@ -440,10 +445,51 @@ export const AdminPanel = () => {
         amount,
         type: 'reload',
         timestamp: serverTimestamp(),
+        description: `Admin reload: ${amount}`,
         status: 'completed'
       });
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, 'walletTransactions');
+    }
+  };
+
+  const handleResetAllTracking = async () => {
+    if (!window.confirm('Are you sure you want to reset live tracking for all active trips?')) return;
+    try {
+      const activeTrips = trips.filter(t => t.status === 'departed');
+      console.log('Active trips to reset:', activeTrips);
+      for (const trip of activeTrips) {
+        await updateDoc(doc(db, 'trips', trip.id), {
+          currentLocation: null,
+          nextStopId: null
+        });
+      }
+      alert('All tracking reset successfully.');
+    } catch (err) {
+      console.error('Error resetting all tracking:', err);
+      handleFirestoreError(err, OperationType.WRITE, 'trips/resetAllTracking');
+    }
+  };
+
+  const handleResetCounterTracking = async () => {
+    if (!selectedCounterId) {
+      alert('Please select a counter.');
+      return;
+    }
+    if (!window.confirm(`Are you sure you want to reset tracking for trips at this counter?`)) return;
+    try {
+      const tripsAtCounter = trips.filter(t => t.nextStopId === selectedCounterId);
+      console.log('Trips at counter to reset:', tripsAtCounter);
+      for (const trip of tripsAtCounter) {
+        await updateDoc(doc(db, 'trips', trip.id), {
+          currentLocation: null,
+          nextStopId: null
+        });
+      }
+      alert('Tracking reset successfully for selected counter.');
+    } catch (err) {
+      console.error('Error resetting counter tracking:', err);
+      handleFirestoreError(err, OperationType.WRITE, 'trips/resetCounterTracking');
     }
   };
 
@@ -464,43 +510,47 @@ export const AdminPanel = () => {
   return (
     <div className="flex flex-col lg:flex-row min-h-screen bg-slate-50/50 -m-4 lg:-m-8">
       {/* Sidebar Navigation */}
-      <div className="lg:w-72 bg-[#1F1A38] text-white flex flex-col h-screen sticky top-0">
-        <div className="p-8 flex items-center gap-3">
-          <div className="bg-white/10 p-2.5 rounded-xl">
-            <BusIcon className="text-white" size={24} />
+      <div className="lg:w-72 bg-accent text-white flex flex-col h-screen sticky top-0 shadow-2xl z-20">
+        <div className="p-8 flex items-center gap-3 group cursor-pointer" onClick={() => navigate('/')}>
+          <div className="bg-white p-2.5 rounded-xl group-hover:scale-110 transition-transform duration-500">
+            <BusIcon className="text-accent" size={24} />
           </div>
           <div>
-            <h1 className="text-xl font-black uppercase tracking-tighter">EasyBus</h1>
+            <h1 className="text-xl font-black uppercase tracking-tighter">SwiftLine</h1>
+            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-white/50 leading-none mt-1">Admin Portal</p>
           </div>
         </div>
 
         <nav className="flex-1 px-4 space-y-1 overflow-y-auto pb-8">
           {[
-            { id: 'dashboard', label: t('ড্যাশবোর্ড', 'Dashboard'), icon: LayoutDashboard },
-            { id: 'counters', label: t('কাউন্টার', 'Counters'), icon: Wallet },
-            { id: 'routes', label: t('রুট', 'Routes'), icon: Navigation },
-            { id: 'trips', label: t('ট্রিপ', 'Trips'), icon: Map },
-            { id: 'tripHistory', label: t('ট্রিপ হিস্ট্রি', 'Trip History'), icon: Clock },
-            { id: 'tripCounterTimes', label: t('কাউন্টার সময়', 'Counter Times'), icon: Clock },
-            { id: 'fleet', label: t('বাস বহর', 'Fleet'), icon: BusIcon },
-            { id: 'tracking', label: t('লাইভ ট্র্যাকিং', 'Live Tracking'), icon: MapPin },
-            { id: 'operators', label: t('অপারেটর', 'Operators'), icon: UserCheck },
-            { id: 'crew', label: t('ক্রু', 'Crew'), icon: Users },
-            { id: 'passengers', label: t('যাত্রী', 'Passengers'), icon: Users },
-            { id: 'security', label: t('নিরাপত্তা', 'Security'), icon: ShieldCheck },
+            { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+            { id: 'counters', label: 'Counters', icon: Wallet },
+            { id: 'routes', label: 'Routes', icon: Navigation },
+            { id: 'trips', label: 'Trips', icon: Map },
+            { id: 'tripHistory', label: 'Trip History', icon: Clock },
+            { id: 'tripCounterTimes', label: 'Counter Times', icon: Clock },
+            { id: 'fleet', label: 'Fleet', icon: BusIcon },
+            { id: 'tracking', label: 'Live Tracking', icon: MapPin },
+            { id: 'operators', label: 'Operators', icon: UserCheck },
+            { id: 'crew', label: 'Crew', icon: Users },
+            { id: 'passengers', label: 'Passengers', icon: Users },
+            { id: 'security', label: 'Security', icon: ShieldCheck },
           ].map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as any)}
               className={cn(
-                "w-full flex items-center gap-3 px-4 py-3.5 rounded-xl font-bold transition-all duration-200",
+                "w-full flex items-center gap-3 px-4 py-3.5 rounded-xl font-bold transition-all duration-300 group",
                 activeTab === tab.id 
-                  ? "bg-white/10 text-white" 
-                  : "text-white/60 hover:bg-white/5 hover:text-white"
+                  ? "bg-white/20 text-white shadow-lg shadow-black/5" 
+                  : "text-white/70 hover:bg-white/10 hover:text-white"
               )}
             >
-              <tab.icon size={20} />
-              <span className="text-sm">{tab.label}</span>
+              <tab.icon size={20} className={`transition-transform duration-500 ${activeTab === tab.id ? 'scale-110' : 'group-hover:scale-110'}`} />
+              <span className="text-sm tracking-wide">{tab.label}</span>
+              {activeTab === tab.id && (
+                <div className="ml-auto w-1.5 h-1.5 bg-white rounded-full shadow-[0_0_10px_rgba(255,255,255,0.8)]" />
+              )}
             </button>
           ))}
         </nav>
@@ -508,16 +558,16 @@ export const AdminPanel = () => {
         <div className="p-4 border-t border-white/10">
           <button 
             onClick={handleLogout}
-            className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl font-bold text-white/60 hover:bg-white/5 hover:text-white transition-all"
+            className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl font-bold text-white/60 hover:bg-red-500/20 hover:text-red-100 transition-all duration-300 group"
           >
-            <LogOut size={20} />
-            <span className="text-sm">{t('লগআউট', 'Logout')}</span>
+            <LogOut size={20} className="group-hover:-translate-x-1 transition-transform" />
+            <span className="text-sm">Logout</span>
           </button>
         </div>
       </div>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0 bg-[#F9FAFB]">
+      <div className="flex-1 flex flex-col min-w-0 bg-bg-off">
         {/* Top Header */}
         <header className="h-20 bg-white border-b border-slate-200 px-8 flex items-center justify-between sticky top-0 z-40">
           <div className="flex-1 max-w-xl">
@@ -527,10 +577,10 @@ export const AdminPanel = () => {
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
             <input 
               type="text"
-              placeholder={t('অনুসন্ধান করুন...', 'Search...')}
+              placeholder="Search..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-12 pr-4 py-2.5 bg-slate-50 border-none rounded-xl text-sm font-medium focus:ring-2 focus:ring-primary/10 transition-all"
+              className="w-full pl-12 pr-4 py-2.5 bg-slate-50 border-none rounded-xl text-sm font-medium focus:ring-2 focus:ring-accent/10 transition-all"
             />
           </div>
 
@@ -550,26 +600,26 @@ export const AdminPanel = () => {
 
         <main className="p-8 space-y-8">
           <div className="flex items-center justify-between">
-            <h2 className="text-3xl font-black uppercase tracking-tighter text-primary">
-              {activeTab === 'dashboard' && t('ড্যাশবোর্ড', 'Dashboard')}
-              {activeTab === 'counters' && t('কাউন্টার ব্যবস্থাপনা', 'Counter Management')}
-              {activeTab === 'operators' && t('অপারেটর ব্যবস্থাপনা', 'Operator Management')}
-              {activeTab === 'routes' && t('রুট ব্যবস্থাপনা', 'Route Management')}
-              {activeTab === 'trips' && t('ট্রিপ ব্যবস্থাপনা', 'Trip Management')}
-              {activeTab === 'tripHistory' && t('ট্রিপ হিস্ট্রি', 'Trip History')}
-              {activeTab === 'fleet' && t('বাস ব্যবস্থাপনা', 'Fleet Management')}
-              {activeTab === 'crew' && t('ক্রু ব্যবস্থাপনা', 'Crew Management')}
-              {activeTab === 'passengers' && t('যাত্রী ব্যবস্থাপনা', 'Passenger Management')}
-              {activeTab === 'tracking' && t('লাইভ ট্র্যাকিং', 'Live Tracking')}
-              {activeTab === 'security' && t('নিরাপত্তা', 'Security')}
+            <h2 className="text-3xl font-black uppercase tracking-tighter text-accent">
+              {activeTab === 'dashboard' && 'Dashboard'}
+              {activeTab === 'counters' && 'Counter Management'}
+              {activeTab === 'operators' && 'Operator Management'}
+              {activeTab === 'routes' && 'Route Management'}
+              {activeTab === 'trips' && 'Trip Management'}
+              {activeTab === 'tripHistory' && 'Trip History'}
+              {activeTab === 'fleet' && 'Fleet Management'}
+              {activeTab === 'crew' && 'Crew Management'}
+              {activeTab === 'passengers' && 'Passenger Management'}
+              {activeTab === 'tracking' && 'Live Tracking'}
+              {activeTab === 'security' && 'Security'}
             </h2>
             {activeTab !== 'dashboard' && activeTab !== 'tracking' && activeTab !== 'tripHistory' && activeTab !== 'security' && (
               <button
                 onClick={() => { setEditingItem(null); setShowModal(true); }}
-                className="bg-primary text-white px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl shadow-primary/20 hover:scale-105 active:scale-95 transition-all flex items-center gap-3"
+                className="bg-accent text-white px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl shadow-accent/20 hover:scale-105 active:scale-95 transition-all flex items-center gap-3"
               >
                 <Plus size={20} />
-                <span>{t('নতুন যোগ করুন', 'Add New')}</span>
+                <span>Add New</span>
               </button>
             )}
             {(activeTab === 'trips' || activeTab === 'tripHistory') && (
@@ -588,10 +638,10 @@ export const AdminPanel = () => {
               {/* Stats Grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 {[
-                  { label: t('মোট রাজস্ব', 'Total Revenue'), value: `৳ ${bookings.filter(b => b.status === 'confirmed').reduce((acc, b) => acc + (b.totalFare || 0), 0).toLocaleString()}`, icon: TrendingUp, color: 'bg-purple-600' },
-                  { label: t('সক্রিয় ট্রিপ', 'Active Trips'), value: trips.filter(t => t.status === 'on-road').length, icon: Activity, color: 'bg-blue-500' },
-                  { label: t('মোট বাস', 'Total Buses'), value: buses.length, icon: BusIcon, color: 'bg-emerald-500' },
-                  { label: t('মোট যাত্রী', 'Total Passengers'), value: passengers.length, icon: Users, color: 'bg-orange-500' },
+                  { label: 'Total Revenue', value: `৳ ${bookings.filter(b => b.status === 'confirmed').reduce((acc, b) => acc + (b.totalFare || 0), 0).toLocaleString()}`, icon: TrendingUp, color: 'bg-accent' },
+                  { label: 'Active Trips', value: trips.filter(t => t.status === 'departed').length, icon: Activity, color: 'bg-emerald-600' },
+                  { label: 'Total Buses', value: buses.length, icon: BusIcon, color: 'bg-teal-600' },
+                  { label: 'Total Passengers', value: passengers.length, icon: Users, color: 'bg-green-600' },
                 ].map((stat, i) => (
                   <div key={i} className={`${stat.color} p-6 rounded-3xl text-white shadow-lg`}>
                     <div className="flex items-center justify-between mb-4">
@@ -609,21 +659,30 @@ export const AdminPanel = () => {
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 <div className="lg:col-span-2 bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
                   <div className="p-6 border-b border-slate-50 flex items-center justify-between">
-                    <h3 className="text-lg font-black uppercase tracking-tight text-slate-800">{t('আজকের ট্রিপসমূহ', "Today's Trips")}</h3>
-                    <button className="text-xs font-bold text-primary hover:underline">{t('সব দেখুন', 'View All')}</button>
+                    <h3 className="text-lg font-black uppercase tracking-tight text-slate-800">Trips on {format(new Date(dashboardDate), 'MMM dd, yyyy')}</h3>
+                    <div className="flex items-center gap-4">
+                      <input 
+                        type="date" 
+                        value={dashboardDate}
+                        onChange={(e) => setDashboardDate(e.target.value)}
+                        className="input-field py-1 px-3 text-sm w-auto"
+                      />
+                      <button onClick={() => setActiveTab('trips')} className="text-xs font-bold text-primary hover:underline">View All</button>
+                    </div>
                   </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-left">
                       <thead className="bg-slate-50/50">
                         <tr className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                          <th className="px-6 py-4">{t('বাস নং', 'Bus No')}</th>
-                          <th className="px-6 py-4">{t('রুট', 'Route')}</th>
-                          <th className="px-6 py-4">{t('সময়', 'Time')}</th>
-                          <th className="px-6 py-4">{t('অবস্থা', 'Status')}</th>
+                          <th className="px-6 py-4">Bus No</th>
+                          <th className="px-6 py-4">Route</th>
+                          <th className="px-6 py-4">Time</th>
+                          <th className="px-6 py-4">Status</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-50">
                         {[...trips]
+                          .filter(t => t.date === dashboardDate)
                           .sort((a, b) => new Date(a.departureTime).getTime() - new Date(b.departureTime).getTime())
                           .slice(0, 5)
                           .map(trip => {
@@ -631,7 +690,7 @@ export const AdminPanel = () => {
                             const route = routes.find(r => r.id === trip.routeId);
                             return (
                               <tr key={trip.id} className="hover:bg-slate-50/50 transition-colors">
-                                <td className="px-6 py-4 font-bold text-slate-700">{bus?.regNo || trip.busId}</td>
+                                <td className="px-6 py-4 font-bold text-accent">{bus?.regNo || trip.busId}</td>
                                 <td className="px-6 py-4 text-sm text-slate-500">{route?.name || trip.routeId}</td>
                                 <td className="px-6 py-4 text-sm font-medium text-slate-500">
                                   <div className="flex items-center gap-2">
@@ -642,7 +701,7 @@ export const AdminPanel = () => {
                                 <td className="px-6 py-4">
                                   <span className={cn(
                                     "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
-                                    trip.status === 'on-road' ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"
+                                    trip.status === 'departed' ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"
                                   )}>
                                     {trip.status}
                                   </span>
@@ -658,7 +717,7 @@ export const AdminPanel = () => {
                 <div className="space-y-6">
                   <div className="bg-primary p-8 rounded-3xl text-white shadow-xl shadow-primary/20 relative overflow-hidden">
                     <Globe className="absolute -right-8 -bottom-8 text-white/10" size={160} />
-                    <h3 className="text-xl font-black uppercase tracking-tight mb-2">{t('সিস্টেম স্ট্যাটাস', 'System Status')}</h3>
+                    <h3 className="text-xl font-black uppercase tracking-tight mb-2">System Status</h3>
                     <p className="text-sm text-white/80 mb-6 font-medium leading-relaxed">All systems are operational. Real-time tracking and ticketing are active.</p>
                     <div className="flex items-center gap-2 bg-white/10 w-fit px-4 py-2 rounded-xl backdrop-blur-sm">
                       <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
@@ -667,15 +726,15 @@ export const AdminPanel = () => {
                   </div>
 
                   <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
-                    <h3 className="text-sm font-black uppercase tracking-tight text-slate-800 mb-4">{t('দ্রুত অ্যাকশন', 'Quick Actions')}</h3>
+                    <h3 className="text-sm font-black uppercase tracking-tight text-slate-800 mb-4">Quick Actions</h3>
                     <div className="grid grid-cols-2 gap-3">
                       <button onClick={() => setActiveTab('trips')} className="p-4 bg-slate-50 rounded-2xl hover:bg-primary hover:text-white transition-all group text-left">
                         <Map className="text-primary group-hover:text-white mb-2" size={20} />
-                        <p className="text-xs font-bold">{t('নতুন ট্রিপ', 'New Trip')}</p>
+                        <p className="text-xs font-bold">New Trip</p>
                       </button>
                       <button onClick={() => setActiveTab('fleet')} className="p-4 bg-slate-50 rounded-2xl hover:bg-primary hover:text-white transition-all group text-left">
                         <BusIcon className="text-primary group-hover:text-white mb-2" size={20} />
-                        <p className="text-xs font-bold">{t('বাস যোগ করুন', 'Add Bus')}</p>
+                        <p className="text-xs font-bold">Add Bus</p>
                       </button>
                     </div>
                   </div>
@@ -691,11 +750,11 @@ export const AdminPanel = () => {
                   <table className="w-full text-left">
                     <thead className="bg-slate-50/50 border-b border-slate-100">
                       <tr className="text-slate-500 text-[10px] font-black uppercase tracking-widest">
-                        <th className="px-6 py-4">{t('নাম', 'Name')}</th>
-                        <th className="px-6 py-4">{t('অবস্থান', 'Location')}</th>
-                        <th className="px-6 py-4">{t('ব্যালেন্স', 'Balance')}</th>
-                        <th className="px-6 py-4">{t('রাজস্ব', 'Revenue')}</th>
-                        <th className="px-6 py-4 text-right">{t('অ্যাকশন', 'Actions')}</th>
+                        <th className="px-6 py-4">Name</th>
+                        <th className="px-6 py-4">Location</th>
+                        <th className="px-6 py-4">Balance</th>
+                        <th className="px-6 py-4">Revenue</th>
+                        <th className="px-6 py-4 text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-50">
@@ -709,7 +768,7 @@ export const AdminPanel = () => {
                             <span className="font-bold text-emerald-600">৳ {counter.walletBalance.toLocaleString()}</span>
                           </td>
                           <td className="px-6 py-4">
-                            <span className="font-bold text-purple-600">৳ {counterRevenue.toLocaleString()}</span>
+                            <span className="font-bold text-accent">৳ {counterRevenue.toLocaleString()}</span>
                           </td>
                           <td className="px-6 py-4 text-right space-x-2">
                             <button onClick={() => handleReloadWallet(counter.id, 5000)} className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors" title="Top-up 5000">
@@ -734,9 +793,9 @@ export const AdminPanel = () => {
               <table className="w-full text-left">
                 <thead className="bg-slate-50/50 border-b border-slate-100">
                   <tr className="text-slate-500 text-[10px] font-black uppercase tracking-widest">
-                    <th className="px-6 py-4">{t('নাম', 'Name')}</th>
-                    <th className="px-6 py-4">{t('স্টপস', 'Stops')}</th>
-                    <th className="px-6 py-4 text-right">{t('অ্যাকশন', 'Actions')}</th>
+                    <th className="px-6 py-4">Name</th>
+                    <th className="px-6 py-4">Stops</th>
+                    <th className="px-6 py-4 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
@@ -776,11 +835,12 @@ export const AdminPanel = () => {
               <table className="w-full text-left">
                 <thead className="bg-slate-50/50 border-b border-slate-100">
                   <tr className="text-slate-500 text-[10px] font-black uppercase tracking-widest">
-                    <th className="px-6 py-4">{t('কোচ আইডি', 'Coach ID')}</th>
-                    <th className="px-6 py-4">{t('রুট', 'Route')}</th>
-                    <th className="px-6 py-4">{t('সময়', 'Time')}</th>
-                    <th className="px-6 py-4">{t('অবস্থা', 'Status')}</th>
-                    <th className="px-6 py-4 text-right">{t('অ্যাকশন', 'Actions')}</th>
+                    <th className="px-6 py-4">Coach ID</th>
+                    <th className="px-6 py-4">Route</th>
+                    <th className="px-6 py-4">Departure</th>
+                    <th className="px-6 py-4">Arrival</th>
+                    <th className="px-6 py-4">Status</th>
+                    <th className="px-6 py-4 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
@@ -791,12 +851,18 @@ export const AdminPanel = () => {
                     const route = routes.find(r => r.id === trip.routeId);
                     return (
                       <tr key={trip.id} className="hover:bg-slate-50/50 transition-colors">
-                        <td className="px-6 py-4 font-bold text-primary">{trip.coachNumber}</td>
+                        <td className="px-6 py-4 font-bold text-accent">{trip.coachNumber}</td>
                         <td className="px-6 py-4 text-sm font-bold text-slate-700">{route?.name || 'Unknown Route'}</td>
                         <td className="px-6 py-4 text-sm text-slate-500 font-medium">
                           <div className="flex items-center gap-2">
                             <Clock size={14} />
                             {format(new Date(trip.departureTime), 'hh:mm a, dd MMM')}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-sm text-slate-500 font-medium">
+                          <div className="flex items-center gap-2">
+                            <Clock size={14} />
+                            {trip.arrivalTime ? format(new Date(trip.arrivalTime), 'hh:mm a, dd MMM') : 'N/A'}
                           </div>
                         </td>
                         <td className="px-6 py-4">
@@ -813,7 +879,7 @@ export const AdminPanel = () => {
                           <button 
                             onClick={() => setSelectedTripForBookings(trip)}
                             className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
-                            title={t('বুকিং দেখুন', 'View Bookings')}
+                            title="View Bookings"
                           >
                             <Users size={18} />
                           </button>
@@ -837,12 +903,12 @@ export const AdminPanel = () => {
               <table className="w-full text-left">
                 <thead className="bg-slate-50/50 border-b border-slate-100">
                   <tr className="text-slate-500 text-[10px] font-black uppercase tracking-widest">
-                    <th className="px-6 py-4">{t('কোচ আইডি', 'Coach ID')}</th>
-                    <th className="px-6 py-4">{t('রুট', 'Route')}</th>
-                    <th className="px-6 py-4">{t('সময়', 'Time')}</th>
-                    <th className="px-6 py-4">{t('অবস্থা', 'Status')}</th>
-                    <th className="px-6 py-4">{t('মোট আয়', 'Total Revenue')}</th>
-                    <th className="px-6 py-4 text-right">{t('অ্যাকশন', 'Actions')}</th>
+                    <th className="px-6 py-4">Coach ID</th>
+                    <th className="px-6 py-4">Route</th>
+                    <th className="px-6 py-4">Time</th>
+                    <th className="px-6 py-4">Status</th>
+                    <th className="px-6 py-4">Total Revenue</th>
+                    <th className="px-6 py-4 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
@@ -855,7 +921,7 @@ export const AdminPanel = () => {
                     const revenue = tripBookings.reduce((sum, b) => sum + b.totalFare, 0);
                     return (
                       <tr key={trip.id} className="hover:bg-slate-50/50 transition-colors">
-                        <td className="px-6 py-4 font-bold text-primary">{trip.coachNumber}</td>
+                        <td className="px-6 py-4 font-bold text-accent">{trip.coachNumber}</td>
                         <td className="px-6 py-4 text-sm font-bold text-slate-700">{route?.name || 'Unknown Route'}</td>
                         <td className="px-6 py-4 text-sm text-slate-500 font-medium">
                           <div className="flex items-center gap-2">
@@ -880,7 +946,7 @@ export const AdminPanel = () => {
                           <button 
                             onClick={() => setSelectedTripForBookings(trip)}
                             className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
-                            title={t('বুকিং দেখুন', 'View Bookings')}
+                            title="View Bookings"
                           >
                             <Users size={18} />
                           </button>
@@ -898,10 +964,10 @@ export const AdminPanel = () => {
               <table className="w-full text-left">
                 <thead className="bg-slate-50/50 border-b border-slate-100">
                   <tr className="text-slate-500 text-[10px] font-black uppercase tracking-widest">
-                    <th className="px-6 py-4">{t('রেজি: নম্বর', 'Reg No')}</th>
-                    <th className="px-6 py-4">{t('টাইপ', 'Type')}</th>
-                    <th className="px-6 py-4">{t('আসন', 'Seats')}</th>
-                    <th className="px-6 py-4 text-right">{t('অ্যাকশন', 'Actions')}</th>
+                    <th className="px-6 py-4">Reg No</th>
+                    <th className="px-6 py-4">Type</th>
+                    <th className="px-6 py-4">Seats</th>
+                    <th className="px-6 py-4 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
@@ -937,10 +1003,10 @@ export const AdminPanel = () => {
               <table className="w-full text-left">
                 <thead className="bg-slate-50/50 border-b border-slate-100">
                   <tr className="text-slate-500 text-[10px] font-black uppercase tracking-widest">
-                    <th className="px-6 py-4">{t('নাম', 'Name')}</th>
-                    <th className="px-6 py-4">{t('ইমেইল', 'Email')}</th>
-                    <th className="px-6 py-4">{t('কাউন্টার', 'Counter')}</th>
-                    <th className="px-6 py-4 text-right">{t('অ্যাকশন', 'Actions')}</th>
+                    <th className="px-6 py-4">Name</th>
+                    <th className="px-6 py-4">Email</th>
+                    <th className="px-6 py-4">Counter</th>
+                    <th className="px-6 py-4 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
@@ -976,10 +1042,10 @@ export const AdminPanel = () => {
               <table className="w-full text-left">
                 <thead className="bg-slate-50/50 border-b border-slate-100">
                   <tr className="text-slate-500 text-[10px] font-black uppercase tracking-widest">
-                    <th className="px-6 py-4">{t('নাম', 'Name')}</th>
-                    <th className="px-6 py-4">{t('পদবী', 'Role')}</th>
-                    <th className="px-6 py-4">{t('ফোন', 'Phone')}</th>
-                    <th className="px-6 py-4 text-right">{t('অ্যাকশন', 'Actions')}</th>
+                    <th className="px-6 py-4">Name</th>
+                    <th className="px-6 py-4">Role</th>
+                    <th className="px-6 py-4">Phone</th>
+                    <th className="px-6 py-4 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
@@ -1011,7 +1077,7 @@ export const AdminPanel = () => {
             <div className="max-w-md mx-auto bg-white p-8 rounded-2xl shadow-sm border border-slate-100">
               <h3 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2">
                 <ShieldCheck className="text-emerald-500" />
-                {t('পাসওয়ার্ড পরিবর্তন', 'Change Password')}
+                Change Password
               </h3>
               
               <form onSubmit={handlePasswordChange} className="space-y-4">
@@ -1027,32 +1093,32 @@ export const AdminPanel = () => {
                 )}
                 
                 <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-1">{t('নতুন পাসওয়ার্ড', 'New Password')}</label>
+                  <label className="block text-sm font-bold text-slate-700 mb-1">New Password</label>
                   <input 
                     type="password" 
                     required
                     value={newPassword}
                     onChange={e => setNewPassword(e.target.value)}
-                    className="w-full p-3 rounded-xl border border-slate-200 focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
+                    className="w-full p-3 rounded-xl border border-slate-200 focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
                   />
                 </div>
                 
                 <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-1">{t('পাসওয়ার্ড নিশ্চিত করুন', 'Confirm Password')}</label>
+                  <label className="block text-sm font-bold text-slate-700 mb-1">Confirm Password</label>
                   <input 
                     type="password" 
                     required
                     value={confirmPassword}
                     onChange={e => setConfirmPassword(e.target.value)}
-                    className="w-full p-3 rounded-xl border border-slate-200 focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
+                    className="w-full p-3 rounded-xl border border-slate-200 focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
                   />
                 </div>
                 
                 <button 
                   type="submit"
-                  className="w-full py-3 bg-primary text-white rounded-xl font-bold hover:bg-primary/90 transition-colors"
+                  className="w-full py-3 bg-accent text-white rounded-xl font-bold hover:bg-accent/90 transition-colors shadow-lg shadow-accent/20"
                 >
-                  {t('আপডেট করুন', 'Update Password')}
+                  Update Password
                 </button>
               </form>
             </div>
@@ -1063,11 +1129,11 @@ export const AdminPanel = () => {
               <table className="w-full text-left">
                 <thead className="bg-slate-50/50 border-b border-slate-100">
                   <tr className="text-slate-500 text-[10px] font-black uppercase tracking-widest">
-                    <th className="px-6 py-4">{t('নাম', 'Name')}</th>
-                    <th className="px-6 py-4">{t('ফোন', 'Phone')}</th>
-                    <th className="px-6 py-4">{t('ইমেইল', 'Email')}</th>
-                    <th className="px-6 py-4">{t('মোট ট্রিপ', 'Total Trips')}</th>
-                    <th className="px-6 py-4 text-right">{t('অ্যাকশন', 'Actions')}</th>
+                    <th className="px-6 py-4">Name</th>
+                    <th className="px-6 py-4">Phone</th>
+                    <th className="px-6 py-4">Email</th>
+                    <th className="px-6 py-4">Total Trips</th>
+                    <th className="px-6 py-4 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
@@ -1077,7 +1143,7 @@ export const AdminPanel = () => {
                       <td className="px-6 py-4 text-sm font-medium text-slate-500">{p.phone}</td>
                       <td className="px-6 py-4 text-sm text-slate-500">{p.email}</td>
                       <td className="px-6 py-4">
-                        <span className="font-bold text-primary">{p.totalTrips || 0}</span>
+                        <span className="font-bold text-accent">{p.totalTrips || 0}</span>
                       </td>
                       <td className="px-6 py-4 text-right space-x-2">
                         <button onClick={() => { setEditingItem(p); setShowModal(true); }} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
@@ -1098,7 +1164,17 @@ export const AdminPanel = () => {
             <div className="grid lg:grid-cols-3 gap-8">
               <div className="lg:col-span-1 space-y-4">
                 <div className="card">
-                  <h3 className="text-lg font-bold mb-4">{t('সক্রিয় ট্রিপসমূহ', 'Active Trips')}</h3>
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-lg font-bold">Active Trips</h3>
+                    <div className="flex gap-2">
+                      <select onChange={(e) => setSelectedCounterId(e.target.value)} className="text-xs border rounded p-1">
+                        <option value="">Select Counter</option>
+                        {counters.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                      </select>
+                      <button onClick={handleResetCounterTracking} className="text-xs text-red-500 hover:underline">Reset Counter</button>
+                      <button onClick={handleResetAllTracking} className="text-xs text-red-500 hover:underline">Reset All</button>
+                    </div>
+                  </div>
                   <div className="space-y-3">
                     {trips.filter(t => t.status === 'departed').map(trip => {
                       const route = routes.find(r => r.id === trip.routeId);
@@ -1110,7 +1186,7 @@ export const AdminPanel = () => {
                           className={cn(
                             "w-full p-4 rounded-xl border text-left transition-all",
                             selectedTrip?.id === trip.id 
-                              ? "bg-primary/5 border-primary shadow-sm" 
+                              ? "bg-accent/5 border-accent shadow-sm" 
                               : "bg-white border-slate-100 hover:border-slate-200"
                           )}
                         >
@@ -1133,7 +1209,7 @@ export const AdminPanel = () => {
                     })}
                     {trips.filter(t => t.status === 'departed').length === 0 && (
                       <p className="text-center text-slate-400 py-8 italic text-sm">
-                        {t('কোনো সক্রিয় ট্রিপ নেই', 'No active trips found')}
+                        No active trips found
                       </p>
                     )}
                   </div>
@@ -1143,39 +1219,39 @@ export const AdminPanel = () => {
               <div className="lg:col-span-2">
                 <div className="card h-full min-h-[500px] flex flex-col">
                   <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-                    <MapPin className="text-primary" />
-                    {t('লাইভ ম্যাপ', 'Live Map')}
+                    <MapPin className="text-accent" />
+                    Live Map
                   </h3>
                   {selectedTrip?.currentLocation ? (
                     <div className="flex-1 bg-slate-50 rounded-2xl border border-slate-100 flex flex-col items-center justify-center p-8 text-center space-y-4">
-                      <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center animate-pulse">
-                        <Navigation className="text-primary" size={40} />
+                      <div className="w-20 h-20 bg-accent/10 rounded-full flex items-center justify-center animate-pulse">
+                        <Navigation className="text-accent" size={40} />
                       </div>
                       <div>
                         <h4 className="text-xl font-bold text-slate-800">
                           {routes.find(r => r.id === selectedTrip.routeId)?.name}
                         </h4>
                         <p className="text-slate-500">
-                          {t('বর্তমান অবস্থান:', 'Current Location:')} {selectedTrip.currentLocation.lat.toFixed(6)}, {selectedTrip.currentLocation.lng.toFixed(6)}
+                          Current Location: {selectedTrip.currentLocation.lat.toFixed(6)}, {selectedTrip.currentLocation.lng.toFixed(6)}
                         </p>
                         <p className="text-xs text-slate-400 mt-2">
-                          {t('সর্বশেষ আপডেট:', 'Last Updated:')} {format(new Date(selectedTrip.currentLocation.timestamp), 'hh:mm:ss a')}
+                          Last Updated: {format(new Date(selectedTrip.currentLocation.timestamp), 'hh:mm:ss a')}
                         </p>
                       </div>
                       <div className="w-full max-w-md p-4 bg-white rounded-xl border border-slate-100 shadow-sm text-left">
                         <div className="flex items-center justify-between mb-2">
-                          <span className="text-sm font-bold text-slate-700">{t('বাসের তথ্য', 'Bus Info')}</span>
+                          <span className="text-sm font-bold text-slate-700">Bus Info</span>
                           <span className="text-xs text-primary font-bold">{buses.find(b => b.id === selectedTrip.busId)?.regNo}</span>
                         </div>
                         <div className="space-y-2">
                           <div className="flex justify-between text-xs">
-                            <span className="text-slate-500">{t('কোচ নম্বর', 'Coach No')}</span>
+                            <span className="text-slate-500">Coach No</span>
                             <span className="font-medium">{selectedTrip.coachNumber}</span>
                           </div>
                           <div className="flex justify-between text-xs">
-                            <span className="text-slate-500">{t('পরবর্তী স্টপ', 'Next Stop')}</span>
+                            <span className="text-slate-500">Next Stop</span>
                             <span className="font-medium text-accent">
-                              {counters.find(c => c.id === selectedTrip.nextStopId)?.name || t('অজানা', 'Unknown')}
+                              {counters.find(c => c.id === selectedTrip.nextStopId)?.name || 'Unknown'}
                             </span>
                           </div>
                         </div>
@@ -1184,10 +1260,10 @@ export const AdminPanel = () => {
                         href={`https://www.google.com/maps?q=${selectedTrip.currentLocation.lat},${selectedTrip.currentLocation.lng}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="btn-primary flex items-center gap-2"
+                        className="bg-accent text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 hover:bg-accent/90 transition-colors shadow-lg shadow-accent/20"
                       >
                         <MapPin size={18} />
-                        {t('গুগল ম্যাপে দেখুন', 'View on Google Maps')}
+                        View on Google Maps
                       </a>
                     </div>
                   ) : (
@@ -1196,10 +1272,10 @@ export const AdminPanel = () => {
                         <Navigation size={48} className="text-slate-200" />
                       </div>
                       <h4 className="text-lg font-bold text-slate-400">
-                        {selectedTrip ? t('লোকেশন ডেটা পাওয়া যায়নি', 'No location data available for this trip') : t('একটি ট্রিপ নির্বাচন করুন', 'Select a trip to see live tracking')}
+                        {selectedTrip ? 'No location data available for this trip' : 'Select a trip to see live tracking'}
                       </h4>
                       <p className="text-sm text-slate-400 mt-2 max-w-xs">
-                        {t('সুপারভাইজার ট্র্যাকিং চালু করলে এখানে লাইভ লোকেশন দেখা যাবে।', 'Live location will appear here once the supervisor starts tracking.')}
+                        Live location will appear here once the supervisor starts tracking.
                       </p>
                     </div>
                   )}
@@ -1213,12 +1289,12 @@ export const AdminPanel = () => {
               <table className="w-full text-left">
                 <thead>
                   <tr className="bg-slate-50/50 border-b border-slate-100">
-                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">{t('ট্রিপ', 'Trip')}</th>
-                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">{t('কাউন্টার', 'Counter')}</th>
-                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">{t('পৌঁছানোর সময়', 'Arrival')}</th>
-                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">{t('ছাড়ার সময়', 'Departure')}</th>
-                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">{t('রিপোর্টিং', 'Reporting')}</th>
-                    <th className="px-6 py-4 text-right text-[10px] font-black text-slate-400 uppercase tracking-widest">{t('অ্যাকশন', 'Actions')}</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Trip</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Counter</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Arrival</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Departure</th>
+                    <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Reporting</th>
+                    <th className="px-6 py-4 text-right text-[10px] font-black text-slate-400 uppercase tracking-widest">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
@@ -1236,7 +1312,7 @@ export const AdminPanel = () => {
                             "px-2 py-1 rounded-full text-[10px] font-black uppercase",
                             tct.isReportingCounter ? "bg-emerald-100 text-emerald-600" : "bg-slate-100 text-slate-400"
                           )}>
-                            {tct.isReportingCounter ? t('হ্যাঁ', 'Yes') : t('না', 'No')}
+                            {tct.isReportingCounter ? 'Yes' : 'No'}
                           </span>
                         </td>
                         <td className="px-6 py-4 text-right space-x-2">
@@ -1262,15 +1338,15 @@ export const AdminPanel = () => {
 
       {/* Modal for adding/editing */}
       {showModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-accent/40 backdrop-blur-md">
           <div className="bg-white w-full max-w-lg rounded-[32px] shadow-2xl relative animate-in fade-in zoom-in duration-300 overflow-hidden">
             <div className="p-8 border-b border-slate-100 flex items-center justify-between">
               <h3 className="text-xl font-black uppercase tracking-tight text-slate-800">
-                {editingItem ? t('সম্পাদনা করুন', 'Edit Item') : t('নতুন যোগ করুন', 'Add New')}
+                {editingItem ? 'Edit Item' : 'Add New'}
               </h3>
               <button 
                 onClick={() => setShowModal(false)}
-                className="p-2 bg-slate-50 text-slate-400 hover:text-primary hover:bg-primary/10 rounded-xl transition-all"
+                className="p-2 bg-slate-50 text-slate-400 hover:text-accent hover:bg-accent/10 rounded-xl transition-all"
               >
                 <X size={20} />
               </button>
@@ -1280,19 +1356,19 @@ export const AdminPanel = () => {
               {activeTab === 'counters' && (
                 <>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('নাম', 'Name')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Name</label>
                     <input name="name" defaultValue={editingItem?.name} className="input-field" required />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('অবস্থান', 'Location')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Location</label>
                     <input name="location" defaultValue={editingItem?.location} className="input-field" required />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('ওয়ালেট ব্যালেন্স', 'Wallet Balance')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Wallet Balance</label>
                     <input name="walletBalance" type="number" defaultValue={editingItem?.walletBalance || 0} className="input-field" required />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('অনুমোদিত গন্তব্য কাউন্টার', 'Allowed Destination Counters')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Allowed Destination Counters</label>
                     <div className="grid grid-cols-2 gap-2 p-4 bg-slate-50 rounded-2xl max-h-40 overflow-y-auto">
                       {counters.filter(c => c.id !== editingItem?.id).map(c => (
                         <label key={c.id} className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer hover:text-primary">
@@ -1316,14 +1392,14 @@ export const AdminPanel = () => {
                         defaultChecked={editingItem?.isReportingCounter}
                         className="w-4 h-4 rounded border-slate-300 text-primary focus:ring-primary"
                       />
-                      {t('রিপোর্টিং কাউন্টার', 'Reporting Counter')}
+                      Reporting Counter
                     </label>
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('অবস্থা', 'Status')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Status</label>
                     <select name="status" defaultValue={editingItem?.status || 'active'} className="input-field">
-                      <option value="active">{t('সক্রিয়', 'Active')}</option>
-                      <option value="inactive">{t('নিষ্ক্রিয়', 'Inactive')}</option>
+                      <option value="active">Active</option>
+                      <option value="inactive">Inactive</option>
                     </select>
                   </div>
                 </>
@@ -1332,11 +1408,11 @@ export const AdminPanel = () => {
               {activeTab === 'routes' && (
                 <>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('রুটের নাম', 'Route Name')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Route Name</label>
                     <input name="name" defaultValue={editingItem?.name} className="input-field" required placeholder="Dhaka - Kushtia" />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('রুট ম্যাপার', 'Route Mapper')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Route Mapper</label>
                     <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
                       <RouteMapper 
                         stops={routeStops} 
@@ -1351,41 +1427,45 @@ export const AdminPanel = () => {
               {activeTab === 'trips' && (
                 <div className="grid grid-cols-2 gap-4">
                   <div className="col-span-2 space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('রুট', 'Route')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Route</label>
                     <select name="routeId" defaultValue={editingItem?.routeId} className="input-field" required>
-                      <option value="">{t('রুট বাছাই করুন', 'Select Route')}</option>
+                      <option value="">Select Route</option>
                       {routes.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
                     </select>
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('বাস', 'Bus')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Bus</label>
                     <select name="busId" defaultValue={editingItem?.busId} className="input-field" required>
-                      <option value="">{t('বাস বাছাই করুন', 'Select Bus')}</option>
+                      <option value="">Select Bus</option>
                       {buses.map(b => <option key={b.id} value={b.id}>{b.regNo} ({b.isAC ? 'AC' : 'Non-AC'})</option>)}
                     </select>
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('কোচ নাম্বার', 'Coach No')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Coach No</label>
                     <input name="coachNumber" defaultValue={editingItem?.coachNumber} className="input-field" required placeholder="501" />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('তারিখ', 'Date')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Date</label>
                     <input name="date" type="date" defaultValue={editingItem?.date || new Date().toISOString().split('T')[0]} className="input-field" required />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('ছাড়ার সময়', 'Departure Time')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Departure Time</label>
                     <input name="baseDepartureTime" type="time" defaultValue={editingItem?.baseDepartureTime || '06:00'} className="input-field" required />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('ভাড়া', 'Fare')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Arrival Time</label>
+                    <input name="arrivalTime" type="time" defaultValue={editingItem?.arrivalTime || '12:00'} className="input-field" required />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Fare</label>
                     <input name="fare" type="number" defaultValue={editingItem?.fare} className="input-field" required />
                   </div>
                   <div className="flex items-center gap-3 px-6 py-4 bg-slate-50 rounded-2xl">
                     <input name="repeatDaily" type="checkbox" defaultChecked={editingItem?.repeatDaily} className="w-5 h-5 rounded border-slate-300 text-accent focus:ring-accent" />
-                    <label className="text-sm font-bold text-slate-600">{t('প্রতিদিন রিপিট হবে', 'Repeat Daily')}</label>
+                    <label className="text-sm font-bold text-slate-600">Repeat Daily</label>
                   </div>
                   <div className="col-span-2 space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('বোর্ডিং পয়েন্ট', 'Boarding Points')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Boarding Points</label>
                     <div className="grid grid-cols-2 gap-2 p-4 bg-slate-50 rounded-2xl max-h-40 overflow-y-auto">
                       {counters.map(c => (
                         <label key={c.id} className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer hover:text-primary">
@@ -1402,7 +1482,7 @@ export const AdminPanel = () => {
                     </div>
                   </div>
                   <div className="col-span-2 space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('ড্রপিং পয়েন্ট', 'Dropping Points')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Dropping Points</label>
                     <div className="grid grid-cols-2 gap-2 p-4 bg-slate-50 rounded-2xl max-h-40 overflow-y-auto">
                       {counters.map(c => (
                         <label key={c.id} className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer hover:text-primary">
@@ -1424,20 +1504,20 @@ export const AdminPanel = () => {
               {activeTab === 'fleet' && (
                 <>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('রেজিস্ট্রেশন নাম্বার', 'Registration No')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Registration No</label>
                     <input name="regNo" defaultValue={editingItem?.regNo} className="input-field" required />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('মডেল', 'Model')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Model</label>
                     <input name="model" defaultValue={editingItem?.model} className="input-field" required />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('আসন সংখ্যা', 'Capacity')}</label>
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Capacity</label>
                       <input name="capacity" type="number" defaultValue={editingItem?.capacity || 40} className="input-field" required />
                     </div>
                     <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('লেআউট', 'Layout')}</label>
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Layout</label>
                       <select name="layout" defaultValue={editingItem?.layout || '2+2'} className="input-field">
                         <option value="2+2">2+2</option>
                         <option value="1+2">1+2</option>
@@ -1447,19 +1527,19 @@ export const AdminPanel = () => {
                   <div className="grid grid-cols-2 gap-4">
                     <div className="flex items-center gap-3 px-6 py-4 bg-slate-50 rounded-2xl">
                       <input name="isAC" type="checkbox" defaultChecked={editingItem?.isAC} className="w-5 h-5 rounded border-slate-300 text-accent focus:ring-accent" />
-                      <label className="text-sm font-bold text-slate-600">{t('এসি বাস', 'AC Bus')}</label>
+                      <label className="text-sm font-bold text-slate-600">AC Bus</label>
                     </div>
                     <div className="flex items-center gap-3 px-6 py-4 bg-slate-50 rounded-2xl">
                       <input name="isWiFi" type="checkbox" defaultChecked={editingItem?.isWiFi} className="w-5 h-5 rounded border-slate-300 text-accent focus:ring-accent" />
-                      <label className="text-sm font-bold text-slate-600">{t('ওয়াইফাই', 'WiFi')}</label>
+                      <label className="text-sm font-bold text-slate-600">WiFi</label>
                     </div>
                     <div className="flex items-center gap-3 px-6 py-4 bg-slate-50 rounded-2xl">
                       <input name="isFood" type="checkbox" defaultChecked={editingItem?.isFood} className="w-5 h-5 rounded border-slate-300 text-accent focus:ring-accent" />
-                      <label className="text-sm font-bold text-slate-600">{t('খাবার', 'Food')}</label>
+                      <label className="text-sm font-bold text-slate-600">Food</label>
                     </div>
                     <div className="flex items-center gap-3 px-6 py-4 bg-slate-50 rounded-2xl">
                       <input name="isCharging" type="checkbox" defaultChecked={editingItem?.isCharging} className="w-5 h-5 rounded border-slate-300 text-accent focus:ring-accent" />
-                      <label className="text-sm font-bold text-slate-600">{t('চার্জিং', 'Charging')}</label>
+                      <label className="text-sm font-bold text-slate-600">Charging</label>
                     </div>
                   </div>
                 </>
@@ -1468,25 +1548,25 @@ export const AdminPanel = () => {
               {activeTab === 'operators' && (
                 <>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('কাস্টম আইডি', 'Custom ID')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Custom ID</label>
                     <input name="customId" defaultValue={editingItem?.customId} className="input-field" required />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('পাসওয়ার্ড', 'Password')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Password</label>
                     <input name="password" type="password" defaultValue={editingItem?.password} className="input-field" required />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('নাম', 'Name')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Name</label>
                     <input name="name" defaultValue={editingItem?.name} className="input-field" required />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('ইমেইল', 'Email')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Email</label>
                     <input name="email" type="email" defaultValue={editingItem?.email} className="input-field" required />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('কাউন্টার', 'Counter')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Counter</label>
                     <select name="counterId" defaultValue={editingItem?.counterId} className="input-field" required>
-                      <option value="">{t('কাউন্টার বাছাই করুন', 'Select Counter')}</option>
+                      <option value="">Select Counter</option>
                       {counters.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                     </select>
                   </div>
@@ -1496,53 +1576,53 @@ export const AdminPanel = () => {
               {activeTab === 'crew' && (
                 <>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('কাস্টম আইডি', 'Custom ID')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Custom ID</label>
                     <input name="customId" defaultValue={editingItem?.customId} className="input-field" required />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('পাসওয়ার্ড', 'Password')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Password</label>
                     <input name="password" type="password" defaultValue={editingItem?.password} className="input-field" required />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('নাম', 'Name')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Name</label>
                     <input name="name" defaultValue={editingItem?.name} className="input-field" required />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('পদবী', 'Role')}</label>
-                    <select name="role" defaultValue={editingItem?.role || 'Driver'} className="input-field" required>
-                      <option value="Driver">{t('ড্রাইভার', 'Driver')}</option>
-                      <option value="Supervisor">{t('সুপারভাইজার', 'Supervisor')}</option>
-                      <option value="Helper">{t('হেল্পার', 'Helper')}</option>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Role</label>
+                    <select name="role" defaultValue={editingItem?.role || 'driver'} className="input-field" required>
+                      <option value="driver">Driver</option>
+                      <option value="supervisor">Supervisor</option>
+                      <option value="helper">Helper</option>
                     </select>
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('ফোন', 'Phone')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Phone</label>
                     <input name="phone" defaultValue={editingItem?.phone} className="input-field" required />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('ইমেইল', 'Email')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Email</label>
                     <input name="email" type="email" defaultValue={editingItem?.email} className="input-field" required />
                   </div>
-                  <p className="text-xs text-slate-500 italic">{t('দ্রষ্টব্য: স্টাফদের তাদের ইমেইল দিয়ে সাইন-আপ করতে হবে।', 'Note: Staff must sign-up using their email.')}</p>
+                  <p className="text-xs text-slate-500 italic">Note: Staff must sign-up using their email.</p>
                 </>
               )}
 
               {activeTab === 'passengers' && (
                 <>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('নাম', 'Name')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Name</label>
                     <input name="name" defaultValue={editingItem?.name} className="input-field" required />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('ফোন', 'Phone')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Phone</label>
                     <input name="phone" defaultValue={editingItem?.phone} className="input-field" required />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('ইমেইল', 'Email')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Email</label>
                     <input name="email" type="email" defaultValue={editingItem?.email} className="input-field" />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('মোট ট্রিপ', 'Total Trips')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Total Trips</label>
                     <input name="totalTrips" type="number" defaultValue={editingItem?.totalTrips || 0} className="input-field" />
                   </div>
                 </>
@@ -1551,38 +1631,38 @@ export const AdminPanel = () => {
               {activeTab === 'tripCounterTimes' && (
                 <>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('ট্রিপ', 'Trip')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Trip</label>
                     <select name="tripId" defaultValue={editingItem?.tripId} className="input-field" required>
-                      <option value="">{t('ট্রিপ বাছাই করুন', 'Select Trip')}</option>
+                      <option value="">Select Trip</option>
                       {trips.map(t => <option key={t.id} value={t.id}>{t.coachNumber} - {routes.find(r => r.id === t.routeId)?.name}</option>)}
                     </select>
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('কাউন্টার', 'Counter')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Counter</label>
                     <select name="counterId" defaultValue={editingItem?.counterId} className="input-field" required>
-                      <option value="">{t('কাউন্টার বাছাই করুন', 'Select Counter')}</option>
+                      <option value="">Select Counter</option>
                       {counters.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                     </select>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('পৌঁছানোর সময়', 'Arrival Time')}</label>
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Arrival Time</label>
                       <input name="arrivalTime" type="time" defaultValue={editingItem?.arrivalTime} className="input-field" required />
                     </div>
                     <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">{t('ছাড়ার সময়', 'Departure Time')}</label>
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Departure Time</label>
                       <input name="departureTime" type="time" defaultValue={editingItem?.departureTime} className="input-field" required />
                     </div>
                   </div>
                   <div className="flex items-center gap-3 px-6 py-4 bg-slate-50 rounded-2xl">
                     <input name="isReportingCounter" type="checkbox" defaultChecked={editingItem?.isReportingCounter} className="w-5 h-5 rounded border-slate-300 text-accent focus:ring-accent" />
-                    <label className="text-sm font-bold text-slate-600">{t('রিপোর্টিং কাউন্টার', 'Reporting Counter')}</label>
+                    <label className="text-sm font-bold text-slate-600">Reporting Counter</label>
                   </div>
                 </>
               )}
 
               <button type="submit" className="w-full btn-primary py-4 shadow-lg shadow-primary/20">
-                {editingItem ? t('আপডেট করুন', 'Update') : t('সংরক্ষণ করুন', 'Save')}
+                {editingItem ? 'Update' : 'Save'}
               </button>
             </form>
           </div>
@@ -1599,23 +1679,23 @@ export const AdminPanel = () => {
               </div>
             </div>
             <h3 className="text-xl font-black text-center text-slate-800 mb-2">
-              {t('মুছে ফেলতে চান?', 'Confirm Delete')}
+              Confirm Delete
             </h3>
             <p className="text-slate-500 text-center mb-8 text-sm">
-              {t('আপনি কি নিশ্চিত যে আপনি এটি মুছে ফেলতে চান? এটি আর ফিরে পাওয়া যাবে না।', 'Are you sure you want to delete this? This action cannot be undone.')}
+              Are you sure you want to delete this? This action cannot be undone.
             </p>
             <div className="flex gap-3">
               <button 
                 onClick={() => setDeleteConfirm(null)}
                 className="flex-1 py-3.5 font-bold text-slate-600 bg-slate-100 rounded-xl hover:bg-slate-200 transition-all"
               >
-                {t('বাতিল', 'Cancel')}
+                Cancel
               </button>
               <button 
                 onClick={confirmDelete}
                 className="flex-1 py-3.5 font-bold text-white bg-red-600 rounded-xl shadow-lg shadow-red-200 hover:bg-red-700 transition-all"
               >
-                {t('মুছে ফেলুন', 'Delete')}
+                Delete
               </button>
             </div>
           </div>
@@ -1635,8 +1715,8 @@ export const AdminPanel = () => {
             <div className="space-y-8">
               <div className="flex items-center justify-between">
                 <div>
-                  <h3 className="text-2xl font-black text-primary">{t('বুকিং তথ্য', 'Booking Information')}</h3>
-                  <p className="text-slate-500 font-medium">{t('কোচ:', 'Coach:')} {selectedTripForBookings.coachNumber}</p>
+                  <h3 className="text-2xl font-black text-primary">Booking Information</h3>
+                  <p className="text-slate-500 font-medium">Coach: {selectedTripForBookings.coachNumber}</p>
                 </div>
               </div>
 
@@ -1654,7 +1734,7 @@ export const AdminPanel = () => {
                 />
                 
                 <div className="space-y-4">
-                  <h4 className="font-bold text-slate-700">{t('বুকিং তালিকা', 'Booking List')}</h4>
+                  <h4 className="font-bold text-slate-700">Booking List</h4>
                   <div className="space-y-2">
                     {bookings.filter(b => b.tripId === selectedTripForBookings.id).map(booking => {
                       const passenger = passengers.find(p => p.id === booking.passengerId);

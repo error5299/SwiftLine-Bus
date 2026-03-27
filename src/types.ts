@@ -10,19 +10,23 @@ export interface Counter {
 
 export interface Operator {
   id: string;
-  userId: string;
-  password?: string; // Only for admin view
+  userId?: string;
+  customId?: string;
+  password?: string;
   counterId: string;
   role: 'operator' | 'admin' | 'supervisor';
+  email?: string;
+  name?: string;
 }
 
 export interface WalletTransaction {
   id: string;
   counterId: string;
   amount: number;
-  type: 'topup' | 'booking';
-  timestamp: string;
+  type: 'topup' | 'booking' | 'reload';
+  timestamp: any;
   description: string;
+  status?: 'completed' | 'pending' | 'failed';
 }
 
 export interface RouteStop {
@@ -59,6 +63,8 @@ export interface Crew {
   phone: string;
   license: string;
   assignedTripId?: string;
+  customId?: string;
+  password?: string;
 }
 
 export interface Passenger {
@@ -68,6 +74,7 @@ export interface Passenger {
   email: string;
   gender: 'male' | 'female';
   isBlacklisted: boolean;
+  totalTrips?: number;
 }
 
 export interface StopLog {
@@ -81,6 +88,7 @@ export interface TripCounterTime {
   counterId: string;
   arrivalTime: string;
   departureTime: string;
+  isReportingCounter?: boolean;
 }
 
 export interface Trip {
@@ -102,6 +110,7 @@ export interface Trip {
   currentLocation?: { lat: number; lng: number; timestamp: string };
   nextStopId?: string;
   emergencyAlert?: { message: string; timestamp: string; type: 'accident' | 'breakdown' | 'traffic' | 'other' };
+  lockedSeats?: { seatId: string; counterId: string; timestamp: string }[];
 }
 
 export interface Booking {
@@ -110,11 +119,12 @@ export interface Booking {
   passengerId: string;
   seats: string[];
   gender: 'male' | 'female';
+  withCounter?: boolean;
   boardingStopId: string;
   droppingStopId: string;
   totalFare: number;
-  timestamp: string;
-  status: 'confirmed' | 'cancelled';
+  timestamp: any;
+  status: 'confirmed' | 'cancelled' | 'booked' | 'sold';
   bookedByCounterId: string;
 }
 

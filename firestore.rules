@@ -66,6 +66,10 @@ service cloud.firestore {
       );
     }
 
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
@@ -95,7 +99,13 @@ service cloud.firestore {
     // Operators
     match /operators/{operatorId} {
       allow read: if true;
-      allow write: if isAdmin() || true; // Loosened for demo
+      allow write: if isAdmin() || isOwner(operatorId);
+    }
+
+    // Supervisors
+    match /supervisors/{supervisorId} {
+      allow read: if true;
+      allow write: if isAdmin() || isOwner(supervisorId);
     }
 
     // Wallet Transactions
@@ -147,6 +157,18 @@ service cloud.firestore {
     match /tripCounterTimes/{timeId} {
       allow read: if true;
       allow write: if true;
+    }
+
+    // Staff Emails
+    match /staff_emails/{email} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Staff Credentials
+    match /staff_credentials/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
     }
 
     // Default deny

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { db, handleFirestoreError, OperationType } from '../firebase';
-import { collection, onSnapshot, query, where, getDocs, addDoc, doc, getDoc, setDoc } from 'firebase/firestore';
+import { db, auth, handleFirestoreError, OperationType } from '../firebase';
+import { collection, onSnapshot, query, where, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { Trip, Route, Bus, Booking, Passenger, Counter, TripCounterTime } from '../types';
 import { useLanguage } from '../hooks/useLanguage';
 import { SeatMap } from '../components/SeatMap';
@@ -82,12 +82,27 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
   }, [searchParams.from, counters]);
 
   const [searchResults, setSearchResults] = useState<Trip[]>([]);
+  const [expandedTripId, setExpandedTripId] = useState<string | null>(null);
   const [selectedTrip, setSelectedTrip] = useState<Trip | null>(null);
   const [selectedTripBookings, setSelectedTripBookings] = useState<Booking[]>([]);
   const [selectedSeats, setSelectedSeats] = useState<string[]>([]);
   const [passengerData, setPassengerData] = useState({ name: '', phone: '', email: '', gender: 'male' as 'male' | 'female' });
   const [isReturning, setIsReturning] = useState(false);
   const [bookingSuccess, setBookingSuccess] = useState<Booking | null>(null);
+  const [showConfirmationModal, setShowConfirmationModal] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState('bKash');
+  const [couponCode, setCouponCode] = useState('');
+  const [termsAccepted, setTermsAccepted] = useState(false);
+  const sessionId = useRef(Math.random().toString(36).substring(2, 15)).current;
+
+  useEffect(() => {
+    if (expandedTripId) {
+      const trip = searchResults.find(t => t.id === expandedTripId);
+      setSelectedTrip(trip || null);
+    } else {
+      setSelectedTrip(null);
+    }
+  }, [expandedTripId, searchResults]);
   const [trackingTripId, setTrackingTripId] = useState<string | null>(null);
   const [trackCoachNumber, setTrackCoachNumber] = useState('');
   const [trackTicketId, setTrackTicketId] = useState('');
@@ -125,7 +140,7 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
       const q = query(collection(db, 'bookings'), where('tripId', '==', selectedTrip.id));
       const unsub = onSnapshot(q, (snapshot) => {
         setSelectedTripBookings(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Booking)));
-      });
+      }, (err) => handleFirestoreError(err, OperationType.GET, 'bookings'));
       setTimeLeft(600);
       return () => unsub();
     }
@@ -144,19 +159,19 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
   useEffect(() => {
     const unsubTrips = onSnapshot(collection(db, 'trips'), (snapshot) => {
       setTrips(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Trip)));
-    });
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'trips'));
     const unsubRoutes = onSnapshot(collection(db, 'routes'), (snapshot) => {
       setRoutes(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Route)));
-    });
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'routes'));
     const unsubBuses = onSnapshot(collection(db, 'buses'), (snapshot) => {
       setBuses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Bus)));
-    });
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'buses'));
     const unsubCounters = onSnapshot(collection(db, 'counters'), (snapshot) => {
       setCounters(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Counter)));
-    });
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'counters'));
     const unsubTripCounterTimes = onSnapshot(collection(db, 'tripCounterTimes'), (snapshot) => {
       setTripCounterTimes(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as TripCounterTime)));
-    });
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'tripCounterTimes'));
 
     if (initialTracking) {
       // Logic to find the most recent booking for the user could go here
@@ -245,11 +260,23 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
 
   const handleBooking = async () => {
     if (!selectedTrip || selectedSeats.length === 0 || !passengerData.name || !passengerData.phone || !selectedBoarding || !selectedDropping) {
-      alert(t('অনুগ্রহ করে সব তথ্য পূরণ করুন', 'Please fill all required fields'));
+      alert('Please fill all required fields');
       return;
     }
 
     try {
+      // Check if seats are already booked
+      const qBookings = query(collection(db, 'bookings'), where('tripId', '==', selectedTrip.id));
+      const bookingsSnapshot = await getDocs(qBookings);
+      const existingBookings = bookingsSnapshot.docs.map(d => d.data() as Booking);
+      const isBooked = existingBookings.some(b => b.seats.some(s => selectedSeats.includes(s)) && (b.status === 'booked' || b.status === 'sold' || b.status === 'confirmed'));
+      
+      if (isBooked) {
+        alert('One or more selected seats have already been booked by someone else. Please select different seats.');
+        setShowConfirmationModal(false);
+        return;
+      }
+
       let passengerId = '';
       const q = query(collection(db, 'passengers'), where('phone', '==', passengerData.phone));
       const snapshot = await getDocs(q);
@@ -278,6 +305,39 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
       
       // Use setDoc with custom ID
       await setDoc(doc(db, 'bookings', ticketId), bookingData);
+      
+      // Remove locks
+      try {
+        const locksToRemove = selectedTrip.lockedSeats?.filter(l => selectedSeats.includes(l.seatId) && l.counterId === (auth.currentUser?.uid || sessionId)) || [];
+        if (locksToRemove.length > 0) {
+          await updateDoc(doc(db, 'trips', selectedTrip.id), {
+            lockedSeats: arrayRemove(...locksToRemove)
+          });
+        }
+      } catch (e) {
+        console.error("Failed to remove locks", e);
+      }
+      
+      // Send confirmation email
+      try {
+        const boardingCounterName = counters.find(c => c.id === selectedBoarding)?.name || selectedBoarding;
+        const droppingCounterName = counters.find(c => c.id === selectedDropping)?.name || selectedDropping;
+
+        await fetch('/api/send-booking-confirmation', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: passengerData.email,
+            passengerName: passengerData.name,
+            ticketId: ticketId,
+            ticketDetails: `Seats: ${selectedSeats.join(', ')}, Total Fare: ${selectedSeats.length * (selectedTrip.fare || 500)}`,
+            boardingCounter: boardingCounterName,
+            droppingCounter: droppingCounterName
+          }),
+        });
+      } catch (emailError) {
+        console.error("Failed to send confirmation email:", emailError);
+      }
       
       setBookingSuccess(bookingData as Booking);
       setSelectedTrip(null);
@@ -314,13 +374,13 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
       setShowCoachModal(false);
       setTimeout(() => trackingRef.current?.scrollIntoView({ behavior: 'smooth' }), 500);
     } else {
-      alert(t('কোচ আইডি পাওয়া যায়নি', 'Coach ID not found'));
+      alert('Coach ID not found');
     }
   };
 
   const handleTicketTrack = async () => {
     if (!trackTicketId || !trackPhone) {
-      alert(t('অনুগ্রহ করে সব তথ্য পূরণ করুন', 'Please fill all required fields'));
+      alert('Please fill all required fields');
       return;
     }
     setLoading(true);
@@ -338,10 +398,10 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
           setShowTicketModal(false);
           setTimeout(() => trackingRef.current?.scrollIntoView({ behavior: 'smooth' }), 500);
         } else {
-          alert(t('টিকিট আইডি বা ফোন নম্বর ভুল।', 'Invalid Ticket ID or Phone Number.'));
+          alert('Invalid Ticket ID or Phone Number.');
         }
       } else {
-        alert(t('টিকিট পাওয়া যায়নি।', 'Ticket not found.'));
+        alert('Ticket not found.');
       }
     } catch (err) {
       handleFirestoreError(err, OperationType.GET, 'bookings');
@@ -363,7 +423,7 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
       >
         <h3 className="text-xl font-bold mb-8 flex items-center gap-3">
           <Navigation className="text-accent animate-pulse" />
-          {t('লাইভ ট্র্যাকিং', 'Live Tracking')} - {route.name}
+          Live Tracking - {route.name}
         </h3>
         
         <div className="relative py-12">
@@ -401,11 +461,11 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                     </span>
                     {log ? (
                       <span className="text-[10px] text-slate-400 font-medium">
-                        {t('অতিক্রম', 'Passed')} <span className="font-num">{format(new Date(log.timestamp), 'hh:mm a')}</span>
+                        Passed <span className="font-num">{log.timestamp ? format(new Date(log.timestamp), 'hh:mm a') : 'N/A'}</span>
                       </span>
                     ) : isCurrent ? (
                       <span className="text-[10px] text-accent font-bold animate-pulse">
-                        {t('বর্তমান অবস্থান', 'Current Location')}
+                        Current Location
                       </span>
                     ) : null}
                   </div>
@@ -421,15 +481,15 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
               <BusIcon className="text-accent" />
             </div>
             <div>
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">{t('বাসের অবস্থা', 'Bus Status')}</p>
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Bus Status</p>
               <p className="text-lg font-bold text-primary">
-                {trip.status === 'departed' ? t('বাসটি বর্তমানে পথে আছে।', 'The bus is currently on its way.') : t('বাসটি এখনো যাত্রা শুরু করেনি।', 'The bus has not started its journey yet.')}
+                {trip.status === 'departed' ? 'The bus is currently on its way.' : 'The bus has not started its journey yet.'}
               </p>
             </div>
           </div>
           <button className="flex items-center gap-2 text-accent font-bold hover:underline">
             <MapIcon size={18} />
-            {t('মানচিত্রে দেখুন', 'View on Map')}
+            View on Map
           </button>
         </div>
       </motion.div>
@@ -445,7 +505,7 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
           100% { background-position: 0% 50%; }
         }
         .moving-gradient {
-          background: linear-gradient(-45deg, #0074D9, #7FDBFF, #39CCCC, #0074D9);
+          background: linear-gradient(-45deg, #1a1a1a, #28a745, #218838, #1a1a1a);
           background-size: 400% 400%;
           animation: gradientMove 10s ease infinite;
         }
@@ -453,7 +513,7 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
       {/* Hero Section */}
       <section className="relative py-12 md:py-24 px-4 md:px-8 rounded-[2.5rem] overflow-hidden bg-primary shadow-2xl">
         <div className="absolute inset-0 opacity-20">
-          <img src="https://picsum.photos/seed/swiftline/1920/1080?blur=2" alt="Hero" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+          <img src="https://img.freepik.com/free-photo/portrait-girl-standing-near-bus-stop-waiting-her-public-transport-schecks-schedule-sm_1258-151520.jpg?blur=2" alt="Hero" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
         </div>
         <div className="relative max-w-5xl mx-auto text-center space-y-12">
           <motion.div
@@ -461,18 +521,18 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
             animate={{ opacity: 1, y: 0 }}
             className="space-y-6"
           >
-            <h1 className="text-4xl md:text-7xl font-black tracking-tighter text-white leading-tight">
-              {t('আপনার যাত্রা শুরু হোক সুইফটলাইনের সাথে', 'Start Your Journey with SwiftLine')}
+            <h1 className="text-4xl md:text-7xl font-semi bold tracking-tighter text-white leading-tight">
+              Start Your Journey with SwiftLine
             </h1>
             <p className="text-white/70 text-base md:text-lg max-w-2xl mx-auto font-medium">
-              {t('বাংলাদেশের সবচেয়ে নিরাপদ এবং আরামদায়ক বাস টিকেট বুকিং প্ল্যাটফর্ম।', 'The safest and most comfortable bus ticketing platform in Bangladesh.')}
+              The safest and most comfortable bus ticketing platform in Bangladesh.
             </p>
           </motion.div>
 
           {/* Search Box */}
           <div className="bg-white p-4 md:p-8 rounded-[2.5rem] shadow-2xl grid grid-cols-1 md:grid-cols-7 gap-6 items-end relative mt-12">
             <div className="md:col-span-2 text-left relative">
-              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-4">{t('কোথা থেকে', 'From')}</label>
+              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-4">From</label>
               <div className="relative group">
                 <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-accent transition-colors" size={20} />
                 <select 
@@ -480,7 +540,7 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                   value={searchParams.from}
                   onChange={e => setSearchParams({ ...searchParams, from: e.target.value, to: '' })}
                 >
-                  <option value="">{t('কাউন্টার নির্বাচন করুন', 'Select Counter')}</option>
+                  <option value="">Select Counter</option>
                   {counters.map(counter => (
                     <option key={counter.id} value={counter.id}>{counter.name}</option>
                   ))}
@@ -498,7 +558,7 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
             </div>
 
             <div className="md:col-span-2 text-left">
-              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-4">{t('কোথায়', 'To')}</label>
+              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-4">To</label>
               <div className="relative group">
                 <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-accent transition-colors" size={20} />
                 <select 
@@ -507,7 +567,7 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                   onChange={e => setSearchParams({ ...searchParams, to: e.target.value })}
                   disabled={!searchParams.from}
                 >
-                  <option value="">{t('গন্তব্য নির্বাচন করুন', 'Select Destination')}</option>
+                  <option value="">Select Destination</option>
                   {availableDestinations.map(counter => (
                     <option key={counter.id} value={counter.id}>{counter.name}</option>
                   ))}
@@ -516,12 +576,12 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
             </div>
 
             <div className="md:col-span-1 text-left">
-              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-4">{t('তারিখ', 'Date')}</label>
+              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-4">Date</label>
               <div className="relative group">
                 <Calendar className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-accent transition-colors" size={20} />
                 <div className="input-field pl-12 flex items-center cursor-pointer relative">
                   <span className="text-primary font-bold">
-                    {searchParams.date ? format(new Date(searchParams.date), 'dd-MM-yyyy') : t('তারিখ নির্বাচন করুন', 'Select Date')}
+                    {searchParams.date ? (isNaN(Date.parse(searchParams.date)) ? 'Invalid Date' : format(new Date(searchParams.date), 'dd-MM-yyyy')) : 'Select Date'}
                   </span>
                   <input 
                     type="date" 
@@ -545,7 +605,7 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
               className="btn-primary !py-5 rounded-2xl shadow-xl shadow-accent/20"
             >
               <Search size={22} />
-              <span className="text-lg">{t('সার্চ করুন', 'Search')}</span>
+              <span className="text-lg">Search</span>
             </button>
           </div>
         </div>
@@ -571,8 +631,8 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                   <Navigation className="text-emerald-600" size={32} />
                 </div>
                 <div className="space-y-2">
-                  <h3 className="text-2xl font-black text-primary">{t('বাস ট্র্যাক করুন', 'Track Your Bus')}</h3>
-                  <p className="text-slate-500 font-medium">{t('আপনার বাসের কোচ নম্বর লিখুন', 'Enter your bus coach number')}</p>
+                  <h3 className="text-2xl font-black text-primary">Track Your Bus</h3>
+                  <p className="text-slate-500 font-medium">Enter your bus coach number</p>
                 </div>
                 <div className="space-y-4">
                   <input 
@@ -583,7 +643,7 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                     onChange={e => setTrackCoachNumber(e.target.value.toUpperCase())}
                   />
                   <button onClick={handleCoachTrack} className="btn-primary w-full !py-5 rounded-2xl text-lg">
-                    {t('ট্র্যাক করুন', 'Track Now')}
+                    Track Now
                   </button>
                 </div>
               </div>
@@ -609,12 +669,12 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                   <Ticket className="text-accent" size={32} />
                 </div>
                 <div className="space-y-2">
-                  <h3 className="text-2xl font-black text-primary">{t('টিকিট ট্র্যাক করুন', 'Track Your Ticket')}</h3>
-                  <p className="text-slate-500 font-medium">{t('আপনার টিকিট আইডি লিখুন', 'Enter your ticket ID')}</p>
+                  <h3 className="text-2xl font-black text-primary">Track Your Ticket</h3>
+                  <p className="text-slate-500 font-medium">Enter your ticket ID</p>
                 </div>
                 <div className="space-y-4">
                   <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">{t('টিকিট আইডি', 'Ticket ID')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Ticket ID</label>
                     <input 
                       type="text" 
                       placeholder="SL-XXXXXX"
@@ -624,7 +684,7 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                     />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">{t('ফোন নম্বর', 'Phone Number')}</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Phone Number</label>
                     <input 
                       type="tel" 
                       placeholder="01XXXXXXXXX"
@@ -638,7 +698,7 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                     disabled={loading}
                     className="btn-primary w-full !py-5 rounded-2xl text-lg disabled:opacity-50"
                   >
-                    {loading ? <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin" /> : t('ট্র্যাক করুন', 'Track Now')}
+                    {loading ? <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin" /> : 'Track Now'}
                   </button>
                 </div>
               </div>
@@ -670,7 +730,7 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                 
                 <div className="space-y-4">
                   <h3 className="text-3xl font-black text-primary leading-tight">
-                    {t('আসসালামু আলাইকুম', 'Assalamu Alaikum')}
+                    Assalamu Alaikum
                   </h3>
                   <div className="h-1 w-20 bg-accent/20 mx-auto rounded-full" />
                 </div>
@@ -678,29 +738,29 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                 <div className="space-y-6 text-left">
                   <div className="bg-slate-50 p-6 rounded-3xl border-l-4 border-accent shadow-sm">
                     <p className="text-slate-700 font-bold leading-relaxed">
-                      ১। ঈদের সময়ে বাস শুধুমাত্র খালেকপাম্প কাউন্টার হতে ছেড়ে যাবে। অনলাইনে টিকিট করা যাত্রীদের অনুরোধ করা যাচ্ছে খালেকপাম্প থেকে বাসে উঠতে।
+                      1. During Eid, buses will only depart from the Khalekpump counter. Passengers who have booked tickets online are requested to board the bus from Khalekpump.
                     </p>
                   </div>
                   
                   <div className="bg-emerald-50 p-6 rounded-3xl border-l-4 border-emerald-500 shadow-sm">
                     <p className="text-slate-700 font-bold leading-relaxed">
-                      ২। টিকেট ক্রয়ের পরে এবং যাত্রা শুরুর আগে টিকিট ট্র্যাক/যাচাই করে নিবেন। কোনো সমস্যা হলে কল সেন্টার এ যোগাযোগ করুন।
+                      2. Please track/verify your ticket after purchase and before the journey starts. Contact the call center if you face any issues.
                     </p>
                   </div>
                 </div>
 
                 <div className="pt-4 space-y-4">
                   <div className="bg-primary/5 p-6 rounded-3xl">
-                    <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2">{t('কল সেন্টার', 'Call Center')}</p>
+                    <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-2">Call Center</p>
                     <p className="text-2xl font-black text-primary tracking-wider">01841-000026, 01841-000036</p>
-                    <p className="text-sm font-bold text-slate-500 mt-1">{t('সকাল ৬টা - রাত ১১:৩০ টা', '6 AM - 11:30 PM')}</p>
+                    <p className="text-sm font-bold text-slate-500 mt-1">6 AM - 11:30 PM</p>
                   </div>
                   
                   <button 
                     onClick={handleDismissNotice}
                     className="btn-primary w-full !py-5 rounded-2xl text-lg shadow-xl shadow-accent/20"
                   >
-                    {t('ঠিক আছে, বুঝেছি', 'Got it, Thanks')}
+                    Got it, Thanks
                   </button>
                 </div>
               </div>
@@ -724,26 +784,26 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                 <div className="flex items-center justify-between mb-8">
                   <h3 className="text-lg font-bold flex items-center gap-2">
                     <Filter size={20} className="text-accent" />
-                    {t('ফিল্টার', 'Filters')}
+                    Filters
                   </h3>
                   <button 
                     onClick={() => setSearchParams({ ...searchParams, timeSlot: 'all', isAC: false, priceRange: [0, 2000] })}
                     className="text-xs font-bold text-accent uppercase tracking-widest hover:underline"
                   >
-                    {t('রিসেট', 'Reset')}
+                    Reset
                   </button>
                 </div>
 
                 <div className="space-y-8">
                   {/* Time Slots */}
                   <div className="space-y-4">
-                    <p className="text-xs font-black text-slate-400 uppercase tracking-widest">{t('সময়', 'Departure Time')}</p>
+                    <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Departure Time</p>
                     <div className="grid grid-cols-2 gap-2">
                       {[
-                        { id: 'morning', label: t('সকাল', 'Morning'), icon: Sun },
-                        { id: 'afternoon', label: t('দুপুর', 'Afternoon'), icon: CloudSun },
-                        { id: 'night', label: t('রাত', 'Night'), icon: Moon },
-                        { id: 'all', label: t('সব', 'All'), icon: Info },
+                        { id: 'morning', label: 'Morning', icon: Sun },
+                        { id: 'afternoon', label: 'Afternoon', icon: CloudSun },
+                        { id: 'night', label: 'Night', icon: Moon },
+                        { id: 'all', label: 'All', icon: Info },
                       ].map(slot => (
                         <button
                           key={slot.id}
@@ -763,7 +823,7 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
 
                   {/* Bus Type */}
                   <div className="space-y-4">
-                    <p className="text-xs font-black text-slate-400 uppercase tracking-widest">{t('বাসের ধরন', 'Bus Type')}</p>
+                    <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Bus Type</p>
                     <div className="flex gap-2">
                       <button 
                         onClick={() => setSearchParams({ ...searchParams, isAC: false })}
@@ -783,7 +843,7 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                   {/* Price Range */}
                   <div className="space-y-4">
                     <div className="flex justify-between items-center">
-                      <p className="text-xs font-black text-slate-400 uppercase tracking-widest">{t('ভাড়া', 'Price Range')}</p>
+                      <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Price Range</p>
                       <span className="text-xs font-bold text-primary"><span className="font-num">৳ 500 - ৳ {searchParams.priceRange[1]}</span></span>
                     </div>
                     <input 
@@ -816,8 +876,8 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                 <Ticket className="text-accent group-hover:text-white" size={24} />
               </div>
               <div className="text-center">
-                <h3 className="text-lg font-black text-primary">{t('টিকিট ট্র্যাক করুন', 'Track Your Ticket')}</h3>
-                <p className="text-slate-500 text-[10px] font-bold uppercase tracking-widest mt-1">{t('টিকিট আইডি দিয়ে', 'Using Ticket ID')}</p>
+                <h3 className="text-lg font-black text-primary">Track Your Ticket</h3>
+                <p className="text-slate-500 text-[10px] font-bold uppercase tracking-widest mt-1">Using Ticket ID</p>
               </div>
             </motion.button>
 
@@ -831,8 +891,8 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                 <Navigation className="text-emerald-500 group-hover:text-white" size={24} />
               </div>
               <div className="text-center">
-                <h3 className="text-lg font-black text-primary">{t('বাস ট্র্যাক করুন', 'Track Your Bus')}</h3>
-                <p className="text-slate-500 text-[10px] font-bold uppercase tracking-widest mt-1">{t('কোচ আইডি দিয়ে', 'Using Coach ID')}</p>
+                <h3 className="text-lg font-black text-primary">Track Your Bus</h3>
+                <p className="text-slate-500 text-[10px] font-bold uppercase tracking-widest mt-1">Using Coach ID</p>
               </div>
             </motion.button>
           </div>
@@ -850,7 +910,7 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                       <BusIcon size={20} className="text-accent" />
                     </div>
                     <h2 className="text-lg font-bold text-primary">
-                      <span className="font-num">{searchResults.length}</span> {t('টি বাস পাওয়া গেছে', 'Buses Found')}
+                      <span className="font-num">{searchResults.length}</span> Buses Found
                     </h2>
                   </div>
                   <button 
@@ -862,7 +922,7 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                     }`}
                   >
                     <Filter size={14} className={showFilters ? 'text-white' : 'text-accent'} />
-                    {t('ফিল্টার', 'Filter')}
+                    Filter
                   </button>
                 </div>
 
@@ -876,103 +936,473 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                     <motion.div 
                       key={trip.id} 
                       layout
-                      className="card-premium group hover:border-accent/30 transition-all overflow-hidden"
+                      className="bg-white border border-slate-200 rounded-xl p-4 hover:border-slate-400 transition-all overflow-hidden"
                     >
-                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-8 relative">
-                        {/* Date Highlight with Moving Gradient */}
-                        <div className="absolute top-0 left-0 h-full w-1.5 moving-gradient hidden md:block" />
+                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 relative">
                         
-                        <div className="flex items-center gap-6">
-                          <div className="flex flex-col items-center justify-center bg-slate-50 p-4 rounded-2xl group-hover:bg-accent/5 transition-colors min-w-[100px]">
-                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{formatInTimeZone(tripDate, TZ, 'MMM')}</span>
-                            <span className="text-3xl font-black text-primary font-num">{formatInTimeZone(tripDate, TZ, 'dd')}</span>
-                            <span className="text-[10px] font-bold text-slate-500">{formatInTimeZone(tripDate, TZ, 'yyyy')}</span>
+                        <div className="flex items-center gap-4">
+                          <div className="flex flex-col items-center justify-center bg-slate-100 p-2 rounded-lg min-w-[60px]">
+                            <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">{formatInTimeZone(tripDate, TZ, 'MMM')}</span>
+                            <span className="text-xl font-black text-slate-800 font-num">{formatInTimeZone(tripDate, TZ, 'dd')}</span>
                           </div>
                           
-                          <div className="space-y-2">
-                            <div className="flex items-center gap-3">
-                              <h3 className="text-2xl font-black text-primary">{route?.name}</h3>
-                              <span className="flex items-center gap-1 bg-yellow-400/10 text-yellow-700 px-2 py-0.5 rounded-lg text-[10px] font-black">
-                                <Star size={10} fill="currentColor" /> <span className="font-num">4.9</span>
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <h3 className="text-lg font-bold text-slate-900">{route?.name}</h3>
+                              <span className="flex items-center gap-0.5 bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded text-[9px] font-bold">
+                                <Star size={9} fill="currentColor" /> <span className="font-num">4.9</span>
                               </span>
                             </div>
                             
-                            <div className="flex flex-wrap items-center gap-4 text-sm text-slate-500 font-medium">
-                              <div className="flex flex-col">
-                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{t('রওনা', 'Departure')}</span>
-                                <span className="flex items-center gap-1.5 text-accent text-xl font-black font-num">
-                                  <Clock size={20} /> 
-                                  {(() => {
-                                    const counterTime = tripCounterTimes.find(t => t.tripId === trip.id && t.counterId === selectedBoarding);
-                                    if (counterTime) {
-                                      return format(parseISO(counterTime.departureTime), 'hh:mm a');
-                                    }
-                                    return formatInTimeZone(tripDate, TZ, 'hh:mm a');
-                                  })()}
-                                </span>
+                            <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-600 font-medium">
+                              <div className="flex items-center gap-1">
+                                <Clock size={12} className="text-slate-400" /> 
+                                {(() => {
+                                  const counterTime = tripCounterTimes.find(t => t.tripId === trip.id && t.counterId === selectedBoarding);
+                                  return counterTime ? format(parseISO(counterTime.departureTime), 'hh:mm a') : formatInTimeZone(tripDate, TZ, 'hh:mm a');
+                                })()}
                               </div>
                               
-                              <div className="h-8 w-px bg-slate-100 hidden md:block" />
-                              
-                              <div className="flex flex-col">
-                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{t('বাসের ধরন', 'Bus Type')}</span>
-                                <span className="flex items-center gap-1.5 font-bold text-slate-700">
-                                  <BusIcon size={16} className="text-accent" /> 
-                                  {bus?.isAC ? 'AC' : 'Non-AC'}
-                                </span>
+                              <div className="flex items-center gap-1">
+                                <BusIcon size={12} className="text-slate-400" /> 
+                                {bus?.isAC ? 'AC' : 'Non-AC'}
                               </div>
 
-                              <div className="h-8 w-px bg-slate-100 hidden md:block" />
-
-                              <div className="flex flex-col">
-                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{t('আসন', 'Seats')}</span>
-                                <span className="flex items-center gap-1.5 font-bold text-slate-700">
-                                  <MapPin size={16} className="text-accent" /> 
-                                  <span className="font-num">{bus?.capacity}</span> {t('আসন', 'Seats')}
-                                </span>
+                              <div className="flex items-center gap-1">
+                                <MapPin size={12} className="text-slate-400" /> 
+                                <span className="font-num">{bus?.capacity}</span> Seats
                               </div>
                               
                               {trip.coachNumber && (
-                                <span className="flex items-center gap-1.5 bg-primary/10 text-primary px-3 py-1 rounded-lg text-xs font-black">
-                                  {t('কোচ:', 'Coach:') } <span className="font-num">{trip.coachNumber}</span>
+                                <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-[9px] font-bold">
+                                  {trip.coachNumber}
                                 </span>
                               )}
-                            </div>
-                            
-                            {/* Amenities Icons */}
-                            <div className="flex items-center gap-4 pt-2">
-                              <div className="flex items-center gap-1.5 text-slate-400 hover:text-accent transition-colors cursor-help" title="Free Wi-Fi">
-                                <Wifi size={16} className={bus?.isWiFi ? "text-emerald-500" : ""} />
-                                <span className="text-[10px] font-bold uppercase tracking-tighter">WiFi</span>
-                              </div>
-                              <div className="flex items-center gap-1.5 text-slate-400 hover:text-accent transition-colors cursor-help" title="Water & Snacks">
-                                <Coffee size={16} className={bus?.isFood ? "text-emerald-500" : ""} />
-                                <span className="text-[10px] font-bold uppercase tracking-tighter">Food</span>
-                              </div>
-                              <div className="flex items-center gap-1.5 text-slate-400 hover:text-accent transition-colors cursor-help" title="USB Charging">
-                                <Zap size={16} className={bus?.isCharging ? "text-emerald-500" : ""} />
-                                <span className="text-[10px] font-bold uppercase tracking-tighter">Power</span>
-                              </div>
                             </div>
                           </div>
                         </div>
                         
-                        <div className="flex items-center justify-between md:flex-col md:items-end gap-4 border-t md:border-t-0 pt-4 md:pt-0">
+                        <div className="flex items-center justify-between md:flex-col md:items-end gap-2 border-t md:border-t-0 pt-3 md:pt-0">
                           <div className="text-left md:text-right">
-                            <p className="text-[10px] text-slate-400 uppercase font-black tracking-widest">{t('ভাড়া', 'Fare')}</p>
-                            <p className="text-3xl font-black text-primary"><span className="font-num">৳ {trip.fare || 500}</span></p>
+                            <p className="text-[9px] text-slate-400 uppercase font-bold tracking-widest">Fare</p>
+                            <p className="text-xl font-black text-slate-900"><span className="font-num">৳ {trip.fare || 500}</span></p>
                           </div>
-                          <div className="flex items-center gap-3">
-                            <button 
-                              onClick={() => setSelectedTrip(trip)}
-                              className="btn-primary !px-10 flex items-center gap-2 group/btn"
-                            >
-                              {t('আসন দেখুন', 'View Seats')}
-                              <ChevronRight size={20} className="group-hover/btn:translate-x-1 transition-transform" />
-                            </button>
-                          </div>
+                          <button 
+                            onClick={() => setExpandedTripId(expandedTripId === trip.id ? null : trip.id)}
+                            className="bg-slate-800 text-white px-6 py-2 rounded-lg text-xs font-bold hover:bg-slate-900 transition-all flex items-center gap-1"
+                          >
+                            {expandedTripId === trip.id ? 'Hide Seats' : 'View Seats'}
+                            {expandedTripId === trip.id ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                          </button>
                         </div>
                       </div>
+                      <AnimatePresence>
+                        {expandedTripId === trip.id && (
+                          <motion.div 
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: 'auto', opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            className="overflow-hidden"
+                          >
+                            <div className="pt-4 border-t border-slate-100">
+                              {/* Legend */}
+                              <div className="flex flex-wrap items-center justify-center gap-6 mb-8 bg-white p-4 rounded-xl border border-slate-100">
+                                {[
+                                  { label: 'Booked (M)', color: 'bg-slate-400' },
+                                  { label: 'Booked (F)', color: 'bg-female' },
+                                  { label: 'Blocked', color: 'bg-slate-200' },
+                                  { label: 'Available', color: 'bg-white border border-slate-300' },
+                                  { label: 'Selected', color: 'bg-accent' },
+                                  { label: 'Sold (M)', color: 'bg-red-500' },
+                                  { label: 'Sold (F)', color: 'bg-pink-400' },
+                                ].map((item) => (
+                                  <div key={item.label} className="flex items-center gap-2">
+                                    <div className={`w-5 h-5 rounded ${item.color}`} />
+                                    <span className="text-xs font-bold text-slate-600 uppercase">{item.label}</span>
+                                  </div>
+                                ))}
+                              </div>
+
+                              <div className="grid lg:grid-cols-3 gap-8">
+                                {/* Col 1: Seat Selection */}
+                                <div className="space-y-6">
+                                  <div className="bg-slate-50 p-8 rounded-[2rem] border border-slate-100">
+                                    <SeatMap
+                                      capacity={buses.find(b => b.id === trip?.busId)?.capacity || 40}
+                                      layout={buses.find(b => b.id === trip?.busId)?.layout || '2+2'}
+                                      bookedSeats={selectedTripBookings.filter(b => b.status === 'booked').flatMap(b => b.seats)}
+                                      femaleBookedSeats={selectedTripBookings.filter(b => b.status === 'booked' && b.gender === 'female').flatMap(b => b.seats)}
+                                      soldSeats={selectedTripBookings.filter(b => b.status === 'sold' || b.status === 'confirmed').flatMap(b => b.seats)}
+                                      femaleSoldSeats={selectedTripBookings.filter(b => (b.status === 'sold' || b.status === 'confirmed') && b.gender === 'female').flatMap(b => b.seats)}
+                                      selectedSeats={selectedSeats}
+                                      lockedSeats={trip?.lockedSeats?.filter(l => l.counterId !== (auth.currentUser?.uid || sessionId) && (Date.now() - new Date(l.timestamp).getTime() < 5 * 60000)).map(l => l.seatId) || []}
+                                      onSeatClick={(seat) => {
+                                        if (selectedSeats.includes(seat)) {
+                                          setSelectedSeats(prev => prev.filter(s => s !== seat));
+                                          return;
+                                        }
+                                        
+                                        // Gender check
+                                        const row = seat.slice(0, -1);
+                                        const letter = seat.slice(-1);
+                                        const adjacentLetter = letter === 'A' ? 'B' : letter === 'B' ? 'A' : letter === 'C' ? 'D' : 'C';
+                                        const adjacentSeat = `${row}${adjacentLetter}`;
+                                        
+                                        const adjacentBooking = selectedTripBookings.find(b => b.seats.includes(adjacentSeat));
+                                        if (adjacentBooking && passengerData.gender === 'male' && adjacentBooking.gender === 'female') {
+                                          setGenderWarning({ seat });
+                                          return;
+                                        }
+
+                                        if (selectedSeats.length < 4) {
+                                          // Check if it's already locked by someone else
+                                          const isLockedByOther = trip?.lockedSeats?.some(l => l.seatId === seat && l.counterId !== (auth.currentUser?.uid || sessionId) && (Date.now() - new Date(l.timestamp).getTime() < 5 * 60000));
+                                          if (isLockedByOther) {
+                                            alert('Seat is currently being booked by someone else');
+                                            return;
+                                          }
+
+                                          setSelectedSeats(prev => [...prev, seat]);
+                                        }
+                                      }}
+                                    />
+                                  </div>
+                                </div>
+
+                                {/* Col 2: Boarding/Dropping & Seat Info */}
+                                <div className="space-y-6">
+                                  <div className="bg-white p-6 rounded-2xl border border-slate-200 space-y-6">
+                                    <h3 className="text-lg font-black text-accent uppercase tracking-widest">BOARDING/DROPPING:</h3>
+                                    
+                                    <div className="space-y-4">
+                                      <div className="space-y-2">
+                                        <label className="text-xs font-bold text-slate-700">Boarding Point*</label>
+                                        <select 
+                                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg font-bold text-slate-900 outline-none focus:ring-2 focus:ring-accent"
+                                          value={selectedBoarding}
+                                          onChange={e => setSelectedBoarding(e.target.value)}
+                                        >
+                                          <option value="">Select boarding point</option>
+                                          {(trip.boardingPoints || routes.find(r => r.id === trip.routeId)?.stops.map(s => typeof s === 'string' ? s : s.counterId) || []).map((counterId, idx) => {
+                                            return (
+                                              <option key={counterId || idx} value={counterId}>
+                                                {counters.find(c => c.id === counterId)?.name || counterId}
+                                              </option>
+                                            );
+                                          })}
+                                        </select>
+                                      </div>
+
+                                      <div className="space-y-2">
+                                        <label className="text-xs font-bold text-slate-700">Dropping Point*</label>
+                                        <select 
+                                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg font-bold text-slate-900 outline-none focus:ring-2 focus:ring-accent"
+                                          value={selectedDropping}
+                                          onChange={e => setSelectedDropping(e.target.value)}
+                                        >
+                                          <option value="">Select dropping point</option>
+                                          {(trip.droppingPoints || routes.find(r => r.id === trip.routeId)?.stops.map(s => typeof s === 'string' ? s : s.counterId) || []).map((counterId, idx) => {
+                                            return (
+                                              <option key={counterId || idx} value={counterId}>
+                                                {counters.find(c => c.id === counterId)?.name || counterId}
+                                              </option>
+                                            );
+                                          })}
+                                        </select>
+                                      </div>
+                                    </div>
+
+                                    <div className="border-t border-dashed border-slate-300 pt-6 space-y-4">
+                                      <h3 className="text-lg font-black text-accent uppercase tracking-widest">SEAT INFORMATION:</h3>
+                                      <div className="text-sm text-slate-600 space-y-1">
+                                        <p>Seat Fare: ৳ {selectedSeats.length * (trip.fare || 500)}</p>
+                                        <p>Platform Fee: ৳ 0</p>
+                                        <p>Payment Fee: ৳ 0</p>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Col 3: Passenger Information */}
+                                <div className="space-y-6">
+                                  <div className="bg-white p-6 rounded-2xl border border-slate-200 space-y-6">
+                                    <h3 className="text-lg font-black text-accent uppercase tracking-widest">PASSENGER INFORMATION:</h3>
+                                    
+                                    <div className="space-y-4">
+                                      <div className="space-y-2">
+                                        <label className="text-xs font-bold text-slate-700">Booking For</label>
+                                        <div className="flex gap-2">
+                                          <button className="flex-1 py-2 border-2 border-accent text-accent font-bold rounded-lg">Self</button>
+                                          <button className="flex-1 py-2 border border-slate-300 text-slate-500 font-bold rounded-lg">Others</button>
+                                        </div>
+                                      </div>
+
+                                      <div className="grid grid-cols-2 gap-4">
+                                        <div className="space-y-2">
+                                          <label className="text-xs font-bold text-slate-700">Mobile Number*</label>
+                                          <input 
+                                            type="tel"
+                                            placeholder="+8801XXXXXXXXX" 
+                                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-bold text-slate-900 outline-none focus:ring-2 focus:ring-accent"
+                                            value={passengerData.phone}
+                                            onChange={e => setPassengerData({ ...passengerData, phone: e.target.value })}
+                                          />
+                                        </div>
+                                        <div className="space-y-2">
+                                          <label className="text-xs font-bold text-slate-700">Email</label>
+                                          <input 
+                                            type="email"
+                                            placeholder="example@mail.com" 
+                                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-bold text-slate-900 outline-none focus:ring-2 focus:ring-accent"
+                                            value={passengerData.email}
+                                            onChange={e => setPassengerData({ ...passengerData, email: e.target.value })}
+                                          />
+                                        </div>
+                                      </div>
+
+                                      <div className="grid grid-cols-2 gap-4">
+                                        <div className="space-y-2">
+                                          <label className="text-xs font-bold text-slate-700">First Name*</label>
+                                          <input 
+                                            placeholder="First Name" 
+                                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-bold text-slate-900 outline-none focus:ring-2 focus:ring-accent"
+                                            value={passengerData.name.split(' ')[0] || ''}
+                                            onChange={e => setPassengerData({ ...passengerData, name: `${e.target.value} ${passengerData.name.split(' ')[1] || ''}`.trim() })}
+                                          />
+                                        </div>
+                                        <div className="space-y-2">
+                                          <label className="text-xs font-bold text-slate-700">Last Name*</label>
+                                          <input 
+                                            placeholder="Last Name" 
+                                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-bold text-slate-900 outline-none focus:ring-2 focus:ring-accent"
+                                            value={passengerData.name.split(' ')[1] || ''}
+                                            onChange={e => setPassengerData({ ...passengerData, name: `${passengerData.name.split(' ')[0] || ''} ${e.target.value}`.trim() })}
+                                          />
+                                        </div>
+                                      </div>
+
+                                      <div className="space-y-2">
+                                        <label className="text-xs font-bold text-slate-700">Gender*</label>
+                                        <div className="flex gap-2">
+                                          <button 
+                                            onClick={() => setPassengerData({ ...passengerData, gender: 'male' })}
+                                            className={`flex-1 py-2 rounded-lg border-2 font-bold transition-all ${passengerData.gender === 'male' ? 'bg-white text-accent border-accent' : 'bg-white text-slate-500 border-slate-300'}`}
+                                          >
+                                            Male
+                                          </button>
+                                          <button 
+                                            onClick={() => setPassengerData({ ...passengerData, gender: 'female' })}
+                                            className={`flex-1 py-2 rounded-lg border font-bold transition-all ${passengerData.gender === 'female' ? 'bg-white text-accent border-accent' : 'bg-white text-slate-500 border-slate-300'}`}
+                                          >
+                                            Female
+                                          </button>
+                                        </div>
+                                      </div>
+
+                                      <button 
+                                        onClick={async () => {
+                                          // Check if seats are already booked or locked
+                                          const isLockedByOther = trip?.lockedSeats?.some(l => selectedSeats.includes(l.seatId) && l.counterId !== (auth.currentUser?.uid || sessionId) && (Date.now() - new Date(l.timestamp).getTime() < 5 * 60000));
+                                          const isBooked = selectedTripBookings.some(b => b.seats.some(s => selectedSeats.includes(s)) && (b.status === 'booked' || b.status === 'sold' || b.status === 'confirmed'));
+                                          
+                                          if (isLockedByOther || isBooked) {
+                                            alert('One or more selected seats are no longer available. Please select different seats.');
+                                            return;
+                                          }
+
+                                          // Lock the seats
+                                          if (trip) {
+                                            try {
+                                              const newLocks = selectedSeats.map(seat => ({
+                                                seatId: seat,
+                                                counterId: auth.currentUser?.uid || sessionId,
+                                                timestamp: new Date().toISOString()
+                                              }));
+                                              await updateDoc(doc(db, 'trips', trip.id), {
+                                                lockedSeats: arrayUnion(...newLocks)
+                                              });
+                                            } catch (e) {
+                                              console.error("Failed to add locks", e);
+                                            }
+                                          }
+                                          setShowConfirmationModal(true);
+                                        }}
+                                        disabled={selectedSeats.length === 0 || !passengerData.name || !passengerData.phone}
+                                        className="w-full bg-accent text-white font-black py-3 rounded-lg hover:bg-secondary transition-all disabled:opacity-50"
+                                      >
+                                        Proceed
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+
+                      {/* Confirmation Modal */}
+                      <AnimatePresence>
+                        {showConfirmationModal && selectedTrip && (
+                          <motion.div 
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+                          >
+                            <motion.div 
+                              initial={{ scale: 0.9, y: 20 }}
+                              animate={{ scale: 1, y: 0 }}
+                              className="bg-white rounded-2xl p-8 w-full max-w-4xl shadow-2xl relative max-h-[90vh] overflow-y-auto"
+                            >
+                              <button 
+                                onClick={async () => {
+                                  setShowConfirmationModal(false);
+                                  if (selectedTrip) {
+                                    try {
+                                      const locksToRemove = selectedTrip.lockedSeats?.filter(l => selectedSeats.includes(l.seatId) && l.counterId === (auth.currentUser?.uid || sessionId)) || [];
+                                      if (locksToRemove.length > 0) {
+                                        await updateDoc(doc(db, 'trips', selectedTrip.id), {
+                                          lockedSeats: arrayRemove(...locksToRemove)
+                                        });
+                                      }
+                                    } catch (e) {
+                                      console.error("Failed to remove locks", e);
+                                    }
+                                  }
+                                }} 
+                                className="absolute top-6 right-6 p-2 hover:bg-slate-100 rounded-full transition-colors"
+                              >
+                                <X size={20} />
+                              </button>
+                              <h2 className="text-2xl font-black text-slate-900 mb-6">Please confirm!</h2>
+                              
+                              <div className="space-y-6">
+                                <div className="p-4 bg-gradient-to-r from-slate-100 to-slate-50 text-primary rounded-lg font-bold border border-slate-200">
+                                  <p className="text-lg">Your ticket will be temporarily booked for 20 minutes</p>
+                                  <p className="text-sm">Complete payment before the booking expires.</p>
+                                </div>
+                                
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                  {/* Booking Details Card */}
+                                  <div className="border border-slate-200 rounded-xl p-6 bg-white">
+                                    <h4 className="font-bold text-primary mb-4">Booking Details (Onward): <span className="text-accent font-black">{routes.find(r => r.id === selectedTrip.routeId)?.name || 'Unknown Route'}</span></h4>
+                                    <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
+                                      <p className="font-black text-primary text-lg">{buses.find(b => b.id === selectedTrip.busId)?.model || 'Unknown Bus'}</p>
+                                      <p className="text-sm text-accent">{buses.find(b => b.id === selectedTrip.busId)?.regNo || ''}</p>
+                                      <div className="flex justify-between mt-4">
+                                        <div>
+                                          <p className="text-xs text-slate-400">Departure</p>
+                                          <p className="font-black text-primary">{selectedTrip.departureTime ? format(new Date(selectedTrip.departureTime), 'hh:mm a') : 'N/A'}</p>
+                                        </div>
+                                        <div>
+                                          <p className="text-xs text-slate-400">Arrival</p>
+                                          <p className="font-black text-primary">{selectedTrip.arrivalTime ? format(new Date(selectedTrip.arrivalTime), 'hh:mm a') : 'N/A'}</p>
+                                        </div>
+                                      </div>
+                                      <p className="text-sm text-primary mt-4">Seats: <span className="font-bold text-accent">{selectedSeats.join(', ')}</span></p>
+                                    </div>
+                                  </div>
+
+                                  {/* Fare Details Card */}
+                                  <div className="border border-slate-200 rounded-xl p-6 bg-white">
+                                    <h4 className="font-bold text-primary mb-4">Fare Details:</h4>
+                                    <div className="space-y-2 text-sm text-primary">
+                                      <div className="flex justify-between"><p>Seat Fare ({selectedSeats.length} seats):</p><p className="font-bold">৳ {selectedSeats.length * (selectedTrip.fare || 500)}</p></div>
+                                      <div className="flex justify-between"><p>Platform Fee:</p><p className="font-bold">৳ 40</p></div>
+                                      <div className="flex justify-between"><p>Payment Fee:</p><p className="font-bold">৳ 80</p></div>
+                                      <div className="border-t border-slate-200 pt-2 flex justify-between font-bold text-primary"><p>Subtotal</p><p>৳ {selectedSeats.length * (selectedTrip.fare || 500) + 120}</p></div>
+                                      <div className="flex justify-between text-emerald-600"><p>Total Discount:</p><p className="font-bold">- ৳ 120</p></div>
+                                      <div className="border-t border-slate-200 pt-2 flex justify-between font-black text-lg text-accent"><p>Total Fare</p><p>৳ {selectedSeats.length * (selectedTrip.fare || 500)}</p></div>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Passenger Details Card */}
+                                <div className="border border-slate-200 rounded-xl p-6 bg-white">
+                                  <h4 className="font-bold text-primary mb-4">Passenger Details:</h4>
+                                  <div className="grid grid-cols-3 gap-4 text-sm">
+                                    <p className="text-slate-500">Name</p><p className="col-span-2 font-bold text-primary">: {passengerData.name}</p>
+                                    <p className="text-slate-500">Phone Number</p><p className="col-span-2 font-bold text-primary">: {passengerData.phone}</p>
+                                    <p className="text-slate-500">Email</p><p className="col-span-2 font-bold text-primary">: {passengerData.email}</p>
+                                  </div>
+                                </div>
+
+                                {/* Payment and Coupon */}
+                                <div className="grid grid-cols-2 gap-6">
+                                  <div className="space-y-2">
+                                    <div className="flex gap-2">
+                                      <button className="flex-1 py-3 border-2 border-primary text-primary font-bold rounded-lg">Pay Now</button>
+                                      <button className="flex-1 py-3 border border-slate-200 text-slate-500 font-bold rounded-lg">Book Only</button>
+                                    </div>
+                                    <label className="text-sm font-bold text-primary">Payment Method*</label>
+                                    <select 
+                                      className="w-full px-4 py-3 bg-white border border-slate-200 rounded-lg font-bold text-primary"
+                                      value={paymentMethod}
+                                      onChange={e => setPaymentMethod(e.target.value)}
+                                    >
+                                      <option>bKash</option>
+                                      <option>Nagad</option>
+                                    </select>
+                                  </div>
+                                  <div className="space-y-2">
+                                    <label className="text-sm font-bold text-primary">Coupon Code</label>
+                                    <div className="flex gap-2">
+                                      <input 
+                                        className="flex-1 px-4 py-3 bg-white border border-slate-200 rounded-lg font-bold text-primary"
+                                        placeholder="COUPON CODE"
+                                        value={couponCode}
+                                        onChange={e => setCouponCode(e.target.value)}
+                                      />
+                                      <button className="px-6 py-3 border border-[#ffaf00] text-[#ffaf00] font-bold rounded-lg">Apply</button>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Cancellation Policy & Terms */}
+                                <div className="border border-[#e4e4e4] rounded-xl p-4 flex justify-between items-center bg-white">
+                                  <div>
+                                    <p className="font-bold text-[#142143]">Cancellation Policy</p>
+                                    <p className="text-sm text-slate-500">Eid tickets are non-refundable.</p>
+                                  </div>
+                                  <div className="flex flex-col items-end gap-2">
+                                    <span className="bg-[#e4e4e4] text-[#142143] text-xs font-bold px-2 py-1 rounded">Non-Refundable</span>
+                                    <a href="#" className="text-[#1a5d94] text-sm font-bold">View Full Policy &gt;</a>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-2">
+                                  <input 
+                                    type="checkbox" 
+                                    checked={termsAccepted}
+                                    onChange={e => setTermsAccepted(e.target.checked)}
+                                    className="w-5 h-5 accent-[#142143]"
+                                  />
+                                  <label className="text-sm text-[#142143]">
+                                    I AGREE TO ALL THE 
+                                    <span className="text-[#1a5d94] font-bold cursor-pointer">TERMS & CONDITIONS</span>
+                                     and 
+                                    <span className="text-[#1a5d94] font-bold cursor-pointer">PRIVACY NOTICE</span>
+                                  </label>
+                                </div>
+
+                                <button 
+                                  onClick={() => {
+                                    setShowConfirmationModal(false);
+                                    handleBooking();
+                                  }}
+                                  disabled={!termsAccepted}
+                                  className="w-full bg-[#142143] text-white font-black py-4 rounded-lg hover:bg-[#1a5d94] transition-all disabled:opacity-50"
+                                >
+                                  Purchase Now
+                                </button>
+                              </div>
+
+
+                            </motion.div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
                     </motion.div>
                   );
                 })}
@@ -983,256 +1413,15 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                 <div className="bg-slate-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto">
                   <Search size={32} className="text-slate-300" />
                 </div>
-                <h3 className="text-xl font-bold text-slate-400">{t('কোনো বাস পাওয়া যায়নি', 'No Buses Found')}</h3>
-                <p className="text-slate-400 text-sm">{t('অনুগ্রহ করে অন্য কোনো তারিখ বা রুট চেষ্টা করুন।', 'Please try another date or route.')}</p>
+                <h3 className="text-xl font-bold text-slate-400">No Buses Found</h3>
+                <p className="text-slate-400 text-sm">Please try another date or route.</p>
               </div>
             )}
           </AnimatePresence>
         </div>
       </div>
 
-      {/* Booking Modal */}
-      <AnimatePresence>
-        {selectedTrip && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-primary/40 backdrop-blur-md"
-          >
-            <motion.div 
-              initial={{ scale: 0.9, y: 20 }}
-              animate={{ scale: 1, y: 0 }}
-              className="bg-white rounded-[3rem] w-full max-w-6xl max-h-[90vh] overflow-y-auto shadow-2xl relative"
-            >
-              <button 
-                onClick={() => setSelectedTrip(null)}
-                className="absolute top-8 right-8 p-3 bg-slate-100 rounded-full hover:bg-red-50 hover:text-red-500 transition-all z-10"
-              >
-                <X size={24} />
-              </button>
 
-              <div className="p-12 grid lg:grid-cols-5 gap-16">
-                {/* Left: Seat Selection */}
-                <div className="lg:col-span-3 space-y-10">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-3xl font-black text-primary flex items-center gap-3">
-                      <MapIcon className="text-accent" size={32} />
-                      {t('আসন নির্বাচন করুন', 'Select Your Seat')}
-                    </h3>
-                    <div className="text-right">
-                      <div className="text-lg font-black text-primary">{formatInTimeZone(new Date(selectedTrip.departureTime), TZ, 'hh:mm a')}</div>
-                      <div className="text-xs font-bold text-slate-400 uppercase tracking-widest">{formatInTimeZone(new Date(selectedTrip.departureTime), TZ, 'dd MMM yyyy')}</div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-6 bg-slate-50 p-6 rounded-2xl border border-slate-100">
-                    <div className="flex items-center gap-4">
-                      <div className="flex items-center gap-2">
-                        <div className="w-4 h-4 rounded bg-slate-200" />
-                        <span className="text-xs font-bold text-slate-500">{t('উপলব্ধ', 'Available')}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-4 h-4 rounded bg-female" />
-                        <span className="text-xs font-bold text-female">{t('মহিলা', 'Female')}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-4 h-4 rounded bg-accent" />
-                        <span className="text-xs font-bold text-accent">{t('নির্বাচিত', 'Selected')}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="bg-slate-50 p-12 rounded-[3rem] border border-slate-100">
-                    <SeatMap
-                      capacity={buses.find(b => b.id === selectedTrip?.busId)?.capacity || 40}
-                      layout={buses.find(b => b.id === selectedTrip?.busId)?.layout || '2+2'}
-                      bookedSeats={selectedTripBookings.flatMap(b => b.seats)}
-                      femaleBookedSeats={selectedTripBookings.filter(b => b.gender === 'female').flatMap(b => b.seats)}
-                      selectedSeats={selectedSeats}
-                      lockedSeats={[]}
-                      onSeatClick={(seat) => {
-                        if (selectedSeats.includes(seat)) {
-                          setSelectedSeats(prev => prev.filter(s => s !== seat));
-                          return;
-                        }
-                        
-                        // Gender check
-                        const row = seat.slice(0, -1);
-                        const letter = seat.slice(-1);
-                        const adjacentLetter = letter === 'A' ? 'B' : letter === 'B' ? 'A' : letter === 'C' ? 'D' : 'C';
-                        const adjacentSeat = `${row}${adjacentLetter}`;
-                        
-                        const adjacentBooking = selectedTripBookings.find(b => b.seats.includes(adjacentSeat));
-                        if (adjacentBooking && passengerData.gender === 'male' && adjacentBooking.gender === 'female') {
-                          setGenderWarning({ seat });
-                          return;
-                        }
-
-                        if (selectedSeats.length < 4) setSelectedSeats(prev => [...prev, seat]);
-                      }}
-                    />
-                  </div>
-                  
-                  {/* Boarding/Dropping Selection */}
-                  <div className="grid md:grid-cols-2 gap-6">
-                    <div className="space-y-3">
-                      <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-4">{t('বোর্ডিং পয়েন্ট', 'Boarding Point')}</label>
-                      <select 
-                        className="w-full px-6 py-4 bg-slate-50 border-none rounded-2xl font-bold text-primary outline-none focus:ring-2 focus:ring-accent"
-                        value={selectedBoarding}
-                        onChange={e => setSelectedBoarding(e.target.value)}
-                      >
-                        <option value="">{t('বোর্ডিং পয়েন্ট নির্বাচন করুন', 'Select Boarding Point')}</option>
-                        {(selectedTrip.boardingPoints || routes.find(r => r.id === selectedTrip.routeId)?.stops.map(s => typeof s === 'string' ? s : s.counterId) || []).map((counterId, idx) => {
-                          return (
-                            <option key={counterId || idx} value={counterId}>
-                              {counters.find(c => c.id === counterId)?.name || counterId}
-                            </option>
-                          );
-                        })}
-                      </select>
-                    </div>
-                    <div className="space-y-3">
-                      <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-4">{t('ড্রপিং পয়েন্ট', 'Dropping Point')}</label>
-                      <select 
-                        className="w-full px-6 py-4 bg-slate-50 border-none rounded-2xl font-bold text-primary outline-none focus:ring-2 focus:ring-accent"
-                        value={selectedDropping}
-                        onChange={e => setSelectedDropping(e.target.value)}
-                      >
-                        <option value="">{t('ড্রপিং পয়েন্ট নির্বাচন করুন', 'Select Dropping Point')}</option>
-                        {(selectedTrip.droppingPoints || routes.find(r => r.id === selectedTrip.routeId)?.stops.map(s => typeof s === 'string' ? s : s.counterId) || []).map((counterId, idx) => {
-                          return (
-                            <option key={counterId || idx} value={counterId}>
-                              {counters.find(c => c.id === counterId)?.name || counterId}
-                            </option>
-                          );
-                        })}
-                      </select>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Right: Checkout */}
-                <div className="lg:col-span-2">
-                  <div className="bg-slate-50 p-10 rounded-[3rem] border border-slate-100 sticky top-0 space-y-10">
-                    <div className="space-y-2">
-                      <h3 className="text-2xl font-black text-primary">{t('প্যাসেঞ্জার তথ্য', 'Passenger Details')}</h3>
-                      <p className="text-sm text-slate-500 font-medium">{t('টিকিট নিশ্চিত করতে আপনার তথ্য দিন।', 'Enter your details to confirm booking.')}</p>
-                    </div>
-
-                    <div className="space-y-5">
-                      <div className="space-y-2">
-                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">{t('মোবাইল নম্বর', 'Mobile Number')}</label>
-                        <input 
-                          type="tel"
-                          placeholder="01XXXXXXXXX" 
-                          className="w-full px-6 py-4 bg-white border border-slate-100 rounded-2xl font-bold text-primary outline-none focus:ring-2 focus:ring-accent transition-all"
-                          value={passengerData.phone}
-                          onChange={e => setPassengerData({ ...passengerData, phone: e.target.value })}
-                        />
-                      </div>
-
-                      <AnimatePresence>
-                        {isReturning && (
-                          <motion.div 
-                            initial={{ opacity: 0, height: 0 }}
-                            animate={{ opacity: 1, height: 'auto' }}
-                            className="bg-emerald-50 p-4 rounded-2xl border border-emerald-100 flex items-center gap-3"
-                          >
-                            <CheckCircle2 className="text-emerald-500" size={20} />
-                            <span className="text-xs font-bold text-emerald-700">{t('আপনাকে পুনরায় স্বাগতম!', 'Welcome Back!')}</span>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-
-                      <div className="space-y-2">
-                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">{t('লিঙ্গ', 'Gender')}</label>
-                        <div className="flex gap-2">
-                          <button 
-                            onClick={() => setPassengerData({ ...passengerData, gender: 'male' })}
-                            className={`flex-1 py-3 rounded-xl border font-bold transition-all ${passengerData.gender === 'male' ? 'bg-primary text-white border-primary' : 'bg-white text-slate-500 border-slate-100'}`}
-                          >
-                            {t('পুরুষ', 'Male')}
-                          </button>
-                          <button 
-                            onClick={() => setPassengerData({ ...passengerData, gender: 'female' })}
-                            className={`flex-1 py-3 rounded-xl border font-bold transition-all ${passengerData.gender === 'female' ? 'bg-female text-white border-female' : 'bg-white text-slate-500 border-slate-100'}`}
-                          >
-                            {t('মহিলা', 'Female')}
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="space-y-2">
-                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">{t('পুরো নাম', 'Full Name')}</label>
-                        <input 
-                          placeholder={t('আপনার নাম লিখুন', 'Enter your name')} 
-                          className="w-full px-6 py-4 bg-white border border-slate-100 rounded-2xl font-bold text-primary outline-none focus:ring-2 focus:ring-accent transition-all"
-                          value={passengerData.name}
-                          onChange={e => setPassengerData({ ...passengerData, name: e.target.value })}
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">{t('ইমেইল অ্যাড্রেস', 'Email Address')}</label>
-                        <input 
-                          type="email"
-                          placeholder="example@mail.com" 
-                          className="w-full px-6 py-4 bg-white border border-slate-100 rounded-2xl font-bold text-primary outline-none focus:ring-2 focus:ring-accent transition-all"
-                          value={passengerData.email}
-                          onChange={e => setPassengerData({ ...passengerData, email: e.target.value })}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="pt-10 border-t border-slate-200 space-y-8">
-                      <div className="space-y-4">
-                        <div className="flex justify-between items-center">
-                          <span className="text-slate-500 font-bold">{t('নির্বাচিত আসন', 'Selected Seats')}</span>
-                          <span className="text-primary font-black font-num">{selectedSeats.join(', ') || 'None'}</span>
-                        </div>
-                        <div className="flex justify-between items-center">
-                          <span className="text-slate-500 font-bold">{t('মোট ভাড়া', 'Total Fare')}</span>
-                          <span className="text-4xl font-black text-primary"><span className="font-num">৳ {selectedSeats.length * (selectedTrip.fare || 500)}</span></span>
-                        </div>
-                      </div>
-
-                      <div className="space-y-4">
-                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">{t('পেমেন্ট মেথড', 'Secure Payment Gateway')}</p>
-                        <div className="grid grid-cols-4 gap-2">
-                          {['bKash', 'Nagad', 'Rocket', 'Card'].map(p => (
-                            <div key={p} className="aspect-square bg-white border border-slate-100 rounded-xl flex items-center justify-center grayscale hover:grayscale-0 cursor-pointer transition-all">
-                              <span className="text-[10px] font-black text-slate-400">{p}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
-                      <button 
-                        onClick={handleBooking}
-                        disabled={selectedSeats.length === 0 || !passengerData.name || !passengerData.phone}
-                        className="w-full btn-primary !py-5 rounded-[1.5rem] shadow-2xl shadow-accent/30 disabled:opacity-50 flex items-center justify-center gap-3"
-                      >
-                        <CreditCard size={24} />
-                        <span className="text-xl">{t('পেমেন্ট করুন', 'Pay & Confirm')}</span>
-                      </button>
-                      
-                      {/* Seat Timer */}
-                      <div className="flex items-center justify-center gap-2 text-slate-400">
-                        <Clock size={14} />
-                        <span className="text-[10px] font-bold uppercase tracking-widest">
-                          {t('আসনটি সংরক্ষিত:', 'Seats held for:')} <span className="font-num">{Math.floor(timeLeft / 60)}:{(timeLeft % 60).toString().padStart(2, '0')}</span>
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       {/* Gender Warning Modal */}
       <AnimatePresence>
@@ -1252,9 +1441,9 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                 <Info className="text-female" size={32} />
               </div>
               <div className="space-y-2">
-                <h3 className="text-2xl font-black text-primary">{t('লিঙ্গ সতর্কতা', 'Gender Warning')}</h3>
+                <h3 className="text-2xl font-black text-primary">Gender Warning</h3>
                 <p className="text-slate-500 font-medium">
-                  {t('এই আসনের পাশের আসনটি একজন মহিলা যাত্রী বুক করেছেন। আপনি কি নিশ্চিত যে আপনি এটি বুক করতে চান?', 'The adjacent seat is booked by a female passenger. Are you sure you want to book this seat?')}
+                  The adjacent seat is booked by a female passenger. Are you sure you want to book this seat?
                 </p>
               </div>
               <div className="flex gap-4">
@@ -1262,7 +1451,7 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                   onClick={() => setGenderWarning(null)}
                   className="flex-1 py-4 bg-slate-100 text-slate-500 font-bold rounded-xl hover:bg-slate-200 transition-all"
                 >
-                  {t('না', 'No')}
+                  No
                 </button>
                 <button 
                   onClick={() => {
@@ -1271,7 +1460,7 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                   }}
                   className="flex-1 py-4 bg-female text-white font-bold rounded-xl shadow-lg shadow-female/20 hover:scale-105 transition-all"
                 >
-                  {t('হ্যাঁ, নিশ্চিত', 'Yes, Confirm')}
+                  Yes, Confirm
                 </button>
               </div>
             </motion.div>
@@ -1295,11 +1484,11 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
             </div>
             
             <div className="space-y-4">
-              <h2 className="text-5xl font-black text-primary tracking-tighter">{t('বুকিং সফল হয়েছে!', 'Booking Successful!')}</h2>
-              <p className="text-slate-500 font-bold text-xl">{t('আপনার টিকিট আইডি:', 'Your Ticket ID:')} <span className="text-primary font-black font-num">{bookingSuccess.id}</span></p>
+              <h2 className="text-5xl font-black text-primary tracking-tighter">Booking Successful!</h2>
+              <p className="text-slate-500 font-bold text-xl">Your Ticket ID: <span className="text-primary font-black font-num">{bookingSuccess.id}</span></p>
               {(() => {
                 const trip = trips.find(t => t.id === bookingSuccess.tripId);
-                return trip ? <p className="text-slate-500 font-bold text-lg">{t('যাত্রার তারিখ:', 'Travel Date:')} <span className="text-primary font-black font-num">{format(new Date(trip.departureTime), 'dd MMM, yyyy')}</span></p> : null;
+                return trip ? <p className="text-slate-500 font-bold text-lg">Travel Date: <span className="text-primary font-black font-num">{trip.departureTime ? format(new Date(trip.departureTime), 'dd MMM, yyyy') : 'N/A'}</span></p> : null;
               })()}
             </div>
 
@@ -1307,7 +1496,7 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
               <div className="p-6 bg-white rounded-[2.5rem] shadow-2xl shadow-emerald-200/50 border border-emerald-100">
                 <QRCodeCanvas id="ticket-qrcode" value={bookingSuccess.id} size={200} level="H" includeMargin />
               </div>
-              <p className="text-sm text-slate-400 font-bold uppercase tracking-widest">{t('টিকিট সংগ্রহের সময় এই কিউআর কোডটি দেখান', 'Show this QR code at the counter')}</p>
+              <p className="text-sm text-slate-400 font-bold uppercase tracking-widest">Show this QR code at the counter</p>
             </div>
 
             <div className="flex flex-col sm:flex-row justify-center gap-6 pt-8">
@@ -1316,14 +1505,14 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                 className="btn-primary !px-12 !py-5 rounded-2xl flex items-center justify-center gap-3 shadow-xl shadow-primary/20"
               >
                 <Download size={24} />
-                <span className="text-lg">{t('ই-টিকিট ডাউনলোড', 'Download E-Ticket')}</span>
+                <span className="text-lg">Download E-Ticket</span>
               </button>
               <button 
                 onClick={() => { setTrackingTripId(bookingSuccess.tripId); setBookingSuccess(null); }} 
                 className="px-12 py-5 bg-white border border-slate-200 rounded-2xl font-black text-primary hover:bg-slate-50 transition-all flex items-center justify-center gap-3 shadow-lg"
               >
                 <Navigation size={24} className="text-accent" />
-                <span className="text-lg">{t('বাস ট্র্যাক করুন', 'Track Bus')}</span>
+                <span className="text-lg">Track Bus</span>
               </button>
             </div>
           </motion.div>
@@ -1334,12 +1523,12 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
       {trackingTripId && (
         <section ref={trackingRef} className="space-y-8">
           <div className="flex items-center justify-between">
-            <h2 className="text-3xl font-black text-primary tracking-tighter">{t('বাসের বর্তমান অবস্থান', 'Live Bus Tracking')}</h2>
+            <h2 className="text-3xl font-black text-primary tracking-tighter">Live Bus Tracking</h2>
             <button 
               onClick={() => setTrackingTripId(null)}
               className="text-sm font-bold text-slate-400 hover:text-primary transition-colors"
             >
-              {t('বন্ধ করুন', 'Close')}
+              Close
             </button>
           </div>
           {renderTracking(trackingTripId)}

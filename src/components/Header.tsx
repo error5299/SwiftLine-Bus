@@ -4,7 +4,6 @@ import { auth, db } from '../firebase';
 import { signOut } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { useLanguage } from '../hooks/useLanguage';
-import { LanguageToggle } from './LanguageToggle';
 import { Bus, Search, Info, Ticket, Navigation, Phone, User, LogOut, Menu, X, Shield, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -59,11 +58,11 @@ export const Header: React.FC = () => {
   }, []);
 
   const navItems = [
-    { path: '/', label: t('হোম', 'Home'), icon: Search },
-    { path: '/about', label: t('আমাদের সম্পর্কে', 'About Us'), icon: Info },
-    { path: '/track-ticket', label: t('টিকিট ট্র্যাক', 'Track Ticket'), icon: Ticket },
-    { path: '/track-bus', label: t('বাস ট্র্যাক', 'Track Bus'), icon: Navigation, live: true },
-    { path: '/contact', label: t('যোগাযোগ', 'Contact'), icon: Phone },
+    { path: '/', label: 'Home', icon: Search },
+    { path: '/about', label: 'About Us', icon: Info },
+    { path: '/track-ticket', label: 'Track Ticket', icon: Ticket },
+    { path: '/track-bus', label: 'Track Bus', icon: Navigation, live: true },
+    { path: '/contact', label: 'Contact', icon: Phone },
   ];
 
   const handleNavClick = (path: string) => {
@@ -111,12 +110,7 @@ export const Header: React.FC = () => {
 
         {/* Utility Actions (Right) */}
         <div className="flex items-center gap-4">
-          <div className="hidden sm:block">
-            <LanguageToggle />
-          </div>
           
-          <div className="h-8 w-px bg-slate-200 hidden sm:block" />
-
           <div className="hidden lg:flex items-center gap-3">
             {user ? (
               <>
@@ -126,7 +120,7 @@ export const Header: React.FC = () => {
                     className="flex items-center gap-2 bg-primary/10 px-4 py-2 rounded-xl text-sm font-bold text-primary hover:bg-primary/20 transition-colors"
                   >
                     <Shield size={18} />
-                    <span className="hidden md:inline">{t('ড্যাশবোর্ড', 'Dashboard')}</span>
+                    <span className="hidden md:inline">Dashboard</span>
                   </Link>
                 )}
                 <Link 
@@ -134,12 +128,12 @@ export const Header: React.FC = () => {
                   className="flex items-center gap-2 bg-slate-100 px-4 py-2 rounded-xl text-sm font-bold text-primary hover:bg-slate-200 transition-colors"
                 >
                   <User size={18} />
-                  <span className="hidden md:inline">{user.displayName || t('আমার প্রোফাইল', 'My Profile')}</span>
+                  <span className="hidden md:inline">{user.displayName || 'My Profile'}</span>
                 </Link>
                 <button 
                   onClick={() => signOut(auth).then(() => navigate('/'))} 
                   className="p-2 text-slate-400 hover:text-red-500 transition-colors"
-                  title={t('লগআউট', 'Logout')}
+                  title="Logout"
                 >
                   <LogOut size={20} />
                 </button>
@@ -150,7 +144,7 @@ export const Header: React.FC = () => {
                 className="btn-primary !py-2 !px-5 flex items-center gap-2 text-sm"
               >
                 <User size={18} />
-                <span>{t('লগইন', 'Login')}</span>
+                <span>Login</span>
               </Link>
             )}
           </div>
@@ -175,15 +169,14 @@ export const Header: React.FC = () => {
             className="lg:hidden border-t border-slate-100 bg-white overflow-hidden"
           >
             <div className="p-6 space-y-4">
-              <div className="flex justify-between items-center mb-6">
-                <LanguageToggle />
+              <div className="flex justify-end items-center mb-6">
                 {user && (
                   <button 
                     onClick={() => signOut(auth).then(() => navigate('/'))} 
                     className="flex items-center gap-2 text-red-500 font-bold text-sm"
                   >
                     <LogOut size={18} />
-                    <span>{t('লগআউট', 'Logout')}</span>
+                    <span>Logout</span>
                   </button>
                 )}
               </div>
@@ -219,7 +212,7 @@ export const Header: React.FC = () => {
                   className="w-full btn-primary mt-4 flex items-center justify-center gap-2"
                 >
                   <User size={20} />
-                  <span>{t('লগইন', 'Login')}</span>
+                  <span>Login</span>
                 </Link>
               )}
               {user && (
@@ -231,7 +224,7 @@ export const Header: React.FC = () => {
                       className="w-full flex items-center gap-4 p-4 rounded-2xl text-base font-bold bg-primary/10 text-primary"
                     >
                       <Shield size={20} />
-                      <span>{t('ড্যাশবোর্ড', 'Dashboard')}</span>
+                      <span>Dashboard</span>
                     </Link>
                   )}
                   <Link 
@@ -240,7 +233,7 @@ export const Header: React.FC = () => {
                     className="w-full flex items-center gap-4 p-4 rounded-2xl text-base font-bold bg-slate-100 text-primary"
                   >
                     <User size={20} />
-                    <span>{user.displayName || t('আমার প্রোফাইল', 'My Profile')}</span>
+                    <span>{user.displayName || 'My Profile'}</span>
                   </Link>
                 </div>
               )}

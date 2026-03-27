@@ -3,7 +3,7 @@ import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, onSnapshot, query, where, updateDoc, doc, getDocs, getDoc } from 'firebase/firestore';
 import { Trip, Booking, Passenger, Route, Counter, Crew } from '../types';
 import { useLanguage } from '../hooks/useLanguage';
-import { Users, CheckCircle2, AlertTriangle, Phone, MapPin, Search, QrCode, ShieldAlert, MessageSquare, Clock, Navigation, LogOut } from 'lucide-react';
+import { Users, CheckCircle2, AlertTriangle, Phone, MapPin, Search, QrCode, ShieldAlert, MessageSquare, Clock, Navigation, LogOut, Calendar, ChevronRight, History, Activity } from 'lucide-react';
 import { format } from 'date-fns';
 import { formatInTimeZone } from 'date-fns-tz';
 import { Login } from '../components/Login';
@@ -27,6 +27,9 @@ export const SupervisorPanel = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isTracking, setIsTracking] = useState(false);
   const [droppingRemarks, setDroppingRemarks] = useState<{[key: string]: string}>({});
+  const [activeTab, setActiveTab] = useState<'live' | 'history'>('live');
+  const [filterDate, setFilterDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [hasAutoSelected, setHasAutoSelected] = useState(false);
 
   useEffect(() => {
     const savedSupervisor = localStorage.getItem('supervisor_session');
@@ -59,13 +62,32 @@ export const SupervisorPanel = () => {
   }, []);
 
   useEffect(() => {
-    if (supervisorProfile?.assignedTripId) {
-      const trip = trips.find(t => t.id === supervisorProfile.assignedTripId);
-      if (trip) {
-        setSelectedTrip(trip);
+    if (supervisorProfile && trips.length > 0) {
+      const assignedTrips = trips.filter(t => t.crewIds?.includes(supervisorProfile.id));
+      
+      // Update selected trip data if it changed in the main trips list
+      if (selectedTrip) {
+        const stillAssigned = assignedTrips.find(t => t.id === selectedTrip.id);
+        if (!stillAssigned) {
+          setSelectedTrip(null);
+        } else {
+          setSelectedTrip(stillAssigned);
+        }
+      }
+
+      // Auto-selection logic: if only one live trip today and haven't auto-selected yet
+      if (!selectedTrip && !hasAutoSelected && activeTab === 'live' && filterDate === format(new Date(), 'yyyy-MM-dd')) {
+        const liveTripsToday = assignedTrips.filter(t => 
+          t.date === filterDate && 
+          (t.status === 'scheduled' || t.status === 'departed')
+        );
+        if (liveTripsToday.length === 1) {
+          setSelectedTrip(liveTripsToday[0]);
+          setHasAutoSelected(true);
+        }
       }
     }
-  }, [supervisorProfile, trips]);
+  }, [supervisorProfile, trips, activeTab, filterDate, hasAutoSelected]);
 
   useEffect(() => {
     if (!selectedTrip) return;
@@ -114,10 +136,10 @@ export const SupervisorPanel = () => {
         setSupervisorProfile(supData);
         localStorage.setItem('supervisor_session', JSON.stringify(supData));
       } else {
-        setLoginError(t('ভুল আইডি বা পাসওয়ার্ড।', 'Invalid ID or Password.'));
+        setLoginError('Invalid ID or Password.');
       }
     } catch (err) {
-      setLoginError(t('লগইন করতে সমস্যা হয়েছে।', 'Error during login.'));
+      setLoginError('Error during login.');
     }
   };
 
@@ -132,7 +154,7 @@ export const SupervisorPanel = () => {
   if (!supervisorProfile) {
     return (
       <Login 
-        title={t('সুপারভাইজার লগইন', 'Supervisor Login')} 
+        title="Supervisor Login" 
         onLogin={handleCustomLogin} 
         error={loginError} 
       />
@@ -223,52 +245,222 @@ export const SupervisorPanel = () => {
            b.id.toLowerCase().includes(searchQuery.toLowerCase());
   });
 
+  const myTrips = trips.filter(t => t.crewIds?.includes(supervisorProfile.id));
+  const filteredTrips = myTrips.filter(t => {
+    const isDateMatch = t.date === filterDate;
+    const isStatusMatch = activeTab === 'live' 
+      ? (t.status === 'scheduled' || t.status === 'departed')
+      : (t.status === 'arrived' || t.status === 'cancelled');
+    return isDateMatch && isStatusMatch;
+  });
+
   return (
     <div className="space-y-8">
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <h2 className="text-2xl font-bold flex items-center gap-2">
-          <Users className="text-primary" />
-          {t('স্বাগতম,', 'Welcome,')} {supervisorProfile.name}
+        <h2 className="text-2xl font-black flex items-center gap-2 text-slate-800 uppercase tracking-tight">
+          <Users className="text-accent" />
+          Welcome, <span className="text-accent">{supervisorProfile.name}</span>
         </h2>
         <div className="flex items-center gap-4">
-          {selectedTrip && (
-            <div className="px-4 py-2 bg-primary/10 text-primary rounded-lg font-bold">
-              {routes.find(r => r.id === selectedTrip.routeId)?.name} - {format(new Date(selectedTrip.departureTime), 'hh:mm a')}
-            </div>
-          )}
-          <button 
-            onClick={() => setIsTracking(!isTracking)}
-            className={cn(
-              "px-4 py-2 rounded-lg font-bold flex items-center gap-2 transition-all",
-              isTracking ? "bg-emerald-500 text-white shadow-lg shadow-emerald-200" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-            )}
-          >
-            <Navigation size={18} className={isTracking ? "animate-pulse" : ""} />
-            <span>{isTracking ? t('ট্র্যাকিং চালু', 'Tracking On') : t('ট্র্যাকিং শুরু', 'Start Tracking')}</span>
-          </button>
           <button 
             onClick={handleLogout}
-            className="px-4 py-2 bg-red-50 text-red-600 rounded-lg font-bold flex items-center gap-2 hover:bg-red-100 transition-all"
+            className="px-6 py-3 bg-red-50 text-red-600 rounded-2xl font-black uppercase tracking-widest flex items-center gap-2 hover:bg-red-100 transition-all shadow-sm border border-red-100"
           >
             <LogOut size={18} />
-            <span>{t('লগআউট', 'Logout')}</span>
+            <span>Logout</span>
           </button>
         </div>
       </div>
 
-      {selectedTrip ? (
-        <div className="grid lg:grid-cols-3 gap-8">
+      {/* Tabs and Date Filter */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 bg-white p-6 rounded-[32px] shadow-sm border border-slate-100">
+        <div className="flex bg-slate-100 p-1.5 rounded-2xl w-fit">
+          <button
+            onClick={() => {
+              setActiveTab('live');
+              setSelectedTrip(null);
+            }}
+            className={cn(
+              "px-8 py-3 rounded-xl font-black uppercase tracking-widest text-sm transition-all flex items-center gap-2",
+              activeTab === 'live' ? "bg-white text-accent shadow-md" : "text-slate-500 hover:text-slate-700"
+            )}
+          >
+            <Activity size={18} />
+            Live Trip
+            {trips.filter(t => t.crewIds?.includes(supervisorProfile.id) && t.date === filterDate && (t.status === 'scheduled' || t.status === 'departed')).length > 0 && (
+              <span className="w-2 h-2 bg-accent rounded-full animate-pulse" />
+            )}
+          </button>
+          <button
+            onClick={() => {
+              setActiveTab('history');
+              setSelectedTrip(null);
+            }}
+            className={cn(
+              "px-8 py-3 rounded-xl font-black uppercase tracking-widest text-sm transition-all flex items-center gap-2",
+              activeTab === 'history' ? "bg-white text-accent shadow-md" : "text-slate-500 hover:text-slate-700"
+            )}
+          >
+            <History size={18} />
+            Trip History
+          </button>
+        </div>
+        
+        <div className="flex items-center gap-4 bg-slate-50 px-6 py-3 rounded-2xl border border-slate-100">
+          <div className="flex items-center gap-2 text-slate-400">
+            <Calendar size={18} />
+            <span className="text-sm font-black uppercase tracking-widest">Date:</span>
+          </div>
+          <input
+            type="date"
+            className="bg-transparent outline-none text-slate-800 font-black text-sm"
+            value={filterDate}
+            onChange={e => {
+              setFilterDate(e.target.value);
+              setSelectedTrip(null);
+              setHasAutoSelected(false);
+            }}
+          />
+        </div>
+      </div>
+
+      {!selectedTrip ? (
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+          {filteredTrips.length > 0 ? (
+            filteredTrips.map(trip => {
+              const route = routes.find(r => r.id === trip.routeId);
+              return (
+                <div 
+                  key={trip.id}
+                  onClick={() => setSelectedTrip(trip)}
+                  className="group bg-white p-8 rounded-[2rem] border-2 border-transparent hover:border-accent hover:shadow-2xl hover:shadow-accent/5 cursor-pointer transition-all duration-500 relative overflow-hidden"
+                >
+                  <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:scale-110 transition-transform duration-700">
+                    <Navigation size={120} className="text-accent" />
+                  </div>
+
+                  <div className="relative space-y-6">
+                    <div className="flex justify-between items-start">
+                      <div className="space-y-1">
+                        <div className="text-[10px] font-black text-accent uppercase tracking-[0.2em]">
+                          {trip.coachNumber}
+                        </div>
+                        <h4 className="text-xl font-black text-slate-800 leading-tight group-hover:text-accent transition-colors uppercase tracking-tight">
+                          {route?.name || 'Unknown Route'}
+                        </h4>
+                      </div>
+                      <span className={cn(
+                        "px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider shadow-sm",
+                        trip.status === 'departed' ? "bg-accent text-white" :
+                        trip.status === 'scheduled' ? "bg-blue-500 text-white" :
+                        trip.status === 'arrived' ? "bg-slate-200 text-slate-600" :
+                        "bg-red-500 text-white"
+                      )}>
+                        {trip.status}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-6 pt-4 border-t border-slate-50">
+                      <div className="flex items-center gap-2">
+                        <div className="p-2 bg-slate-50 rounded-lg text-slate-400 group-hover:text-accent transition-colors">
+                          <Clock size={16} />
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Time</span>
+                          <span className="text-sm font-black text-slate-700">{format(new Date(trip.departureTime), 'hh:mm a')}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="p-2 bg-slate-50 rounded-lg text-slate-400 group-hover:text-accent transition-colors">
+                          <Users size={16} />
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Staff</span>
+                          <span className="text-sm font-black text-slate-700">{trip.crewIds?.length || 0}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-4">
+                      <div className="flex -space-x-2">
+                        {[1, 2, 3].map(i => (
+                          <div key={i} className="w-8 h-8 rounded-full border-2 border-white bg-slate-100 flex items-center justify-center text-[10px] font-black text-slate-400">
+                            {i}
+                          </div>
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-1 text-accent font-black uppercase tracking-widest text-xs group-hover:translate-x-1 transition-transform">
+                        View Details
+                        <ChevronRight size={16} />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          ) : (
+            <div className="col-span-full py-32 text-center space-y-6 bg-white rounded-[3rem] border-2 border-dashed border-slate-100">
+              <div className="inline-flex bg-slate-50 p-10 rounded-full text-slate-200">
+                {activeTab === 'live' ? <Activity size={64} /> : <History size={64} />}
+              </div>
+              <div className="space-y-2">
+                <h3 className="text-2xl font-black text-slate-800">
+                  {activeTab === 'live' 
+                    ? 'No Live Trips Found'
+                    : 'No Trip History Found'}
+                </h3>
+                <p className="text-slate-400 font-medium max-w-md mx-auto">
+                  No trips assigned to you were found for this date. Please check another date or tab.
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-8">
+          <div className="flex flex-wrap items-center gap-4">
+            <button
+              onClick={() => setSelectedTrip(null)}
+              className="px-6 py-3 bg-white text-accent rounded-2xl font-black uppercase tracking-widest hover:bg-accent/5 transition-all text-sm border border-accent/20 flex items-center gap-2 shadow-sm"
+            >
+              <ChevronRight size={18} className="rotate-180" />
+              Back to List
+            </button>
+            
+            <div className="flex items-center gap-3 px-6 py-3 bg-white rounded-2xl border border-slate-100 shadow-sm ml-auto">
+              <div className="w-3 h-3 bg-accent rounded-full animate-pulse" />
+              <span className="text-sm font-black text-slate-800 uppercase tracking-widest">
+                {selectedTrip.coachNumber} • {routes.find(r => r.id === selectedTrip.routeId)?.name}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-4">
+              <button 
+                onClick={() => setIsTracking(!isTracking)}
+                className={cn(
+                  "px-8 py-3 rounded-2xl font-black uppercase tracking-widest text-sm flex items-center gap-3 transition-all duration-500",
+                  isTracking 
+                    ? "bg-accent text-white shadow-xl shadow-accent/20 scale-105" 
+                    : "bg-white text-slate-600 border border-slate-100 hover:bg-slate-50 shadow-sm"
+                )}
+              >
+                <Navigation size={20} className={cn("transition-transform", isTracking && "animate-pulse")} />
+                <span>{isTracking ? 'Tracking On' : 'Start Tracking'}</span>
+              </button>
+            </div>
+          </div>
+          <div className="grid lg:grid-cols-3 gap-8">
           {/* Manifest */}
           <div className="lg:col-span-2 space-y-6">
-            <div className="card">
+            <div className="card-premium">
               <div className="flex justify-between items-center mb-6">
-                <h3 className="text-lg font-bold">{t('যাত্রী তালিকা', 'Passenger Manifest')}</h3>
+                <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight">Passenger Manifest</h3>
                 <div className="relative">
                   <Search className="absolute left-3 top-2.5 text-slate-400" size={18} />
                   <input
                     type="text"
-                    placeholder={t('খুঁজুন (নাম, ফোন বা টিকিট আইডি)...', 'Search (Name, Phone or Ticket ID)...')}
-                    className="pl-10 pr-4 py-2 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-primary text-sm w-64"
+                    placeholder="Search (Name, Phone or Ticket ID)..."
+                    className="pl-10 pr-4 py-2 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent text-sm w-64 font-medium"
                     value={searchQuery}
                     onChange={e => setSearchQuery(e.target.value)}
                   />
@@ -278,11 +470,11 @@ export const SupervisorPanel = () => {
               <div className="overflow-x-auto">
                 <table className="w-full text-left">
                   <thead>
-                    <tr className="border-b border-slate-100 text-slate-500 text-sm">
-                      <th className="pb-4 font-semibold">{t('যাত্রী', 'Passenger')}</th>
-                      <th className="pb-4 font-semibold">{t('আসন', 'Seats')}</th>
-                      <th className="pb-4 font-semibold">{t('বোর্ডিং/ড্রপিং', 'Boarding/Dropping')}</th>
-                      <th className="pb-4 font-semibold text-right">{t('অ্যাকশন', 'Action')}</th>
+                    <tr className="border-b border-slate-100 text-slate-400 text-[10px] font-black uppercase tracking-[0.2em]">
+                      <th className="pb-4">Passenger</th>
+                      <th className="pb-4">Seats</th>
+                      <th className="pb-4">Boarding/Dropping</th>
+                      <th className="pb-4 text-right">Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50">
@@ -292,10 +484,10 @@ export const SupervisorPanel = () => {
                       const isBoarded = (booking as any).status === 'boarded';
 
                       return (
-                        <tr key={booking.id} className="group hover:bg-slate-50/50 transition-colors">
+                        <tr key={booking.id} className="group hover:bg-accent/5 transition-all">
                           <td className="py-4">
-                            <div className="font-bold text-slate-800">{passenger?.name}</div>
-                            <div className="text-xs text-slate-500 flex items-center gap-1">
+                            <div className="font-black text-slate-800 uppercase tracking-tight group-hover:text-accent transition-colors">{passenger?.name}</div>
+                            <div className="text-xs text-slate-500 flex items-center gap-1 font-bold">
                               <Phone size={10} /> {passenger?.phone}
                             </div>
                             <div className="text-[10px] text-slate-400 font-mono mt-1">ID: {booking.id}</div>
@@ -303,18 +495,18 @@ export const SupervisorPanel = () => {
                           <td className="py-4">
                             <div className="flex gap-1">
                               {booking.seats.map(s => (
-                                <span key={s} className="bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded text-[10px] font-bold">{s}</span>
+                                <span key={s} className="bg-accent/10 text-accent px-1.5 py-0.5 rounded-lg text-[10px] font-black uppercase tracking-wider">{s}</span>
                               ))}
                             </div>
                           </td>
-                          <td className="py-4 text-sm text-slate-500">
+                          <td className="py-4 text-sm text-slate-500 font-medium">
                             <div className="space-y-1">
                               <div className="flex items-center gap-1">
-                                <span className="text-[10px] font-black text-emerald-600 uppercase">From:</span>
+                                <span className="text-[10px] font-black text-accent uppercase tracking-widest">From:</span>
                                 {boardingCounter?.name || 'Online'}
                               </div>
                               <div className="flex items-center gap-1">
-                                <span className="text-[10px] font-black text-orange-600 uppercase">To:</span>
+                                <span className="text-[10px] font-black text-orange-600 uppercase tracking-widest">To:</span>
                                 {counters.find(c => c.id === booking.droppingStopId)?.name || 'N/A'}
                               </div>
                             </div>
@@ -324,32 +516,32 @@ export const SupervisorPanel = () => {
                               {!isBoarded && (
                                 <button
                                   onClick={() => handleBoarding(booking.id)}
-                                  className="px-3 py-1.5 bg-primary text-white rounded-lg text-xs font-bold hover:bg-blue-800 transition-all flex items-center gap-1"
+                                  className="px-4 py-2 bg-accent text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-accent/90 transition-all shadow-lg shadow-accent/20"
                                 >
-                                  {t('বোর্ড করুন', 'Mark Boarded')}
+                                  Mark Boarded
                                 </button>
                               )}
                               {isBoarded && (booking as any).status !== 'dropped' && (
                                 <div className="space-y-2 w-full max-w-[200px]">
                                   <input 
                                     type="text"
-                                    placeholder={t('রিমার্কস...', 'Remarks...')}
-                                    className="w-full px-2 py-1 text-[10px] border border-slate-200 rounded outline-none focus:ring-1 focus:ring-accent"
+                                    placeholder="Remarks..."
+                                    className="w-full px-3 py-2 text-[10px] border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent font-medium"
                                     value={droppingRemarks[booking.id] || ''}
                                     onChange={e => setDroppingRemarks({...droppingRemarks, [booking.id]: e.target.value})}
                                   />
                                   <button
                                     onClick={() => handleDropping(booking.id)}
-                                    className="w-full px-3 py-1.5 bg-emerald-500 text-white rounded-lg text-xs font-bold hover:bg-emerald-600 transition-all flex items-center justify-center gap-1"
+                                    className="w-full px-4 py-2 bg-emerald-500 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-200"
                                   >
-                                    {t('ড্রপ করুন', 'Mark Dropped')}
+                                    Mark Dropped
                                   </button>
                                 </div>
                               )}
                               {(booking as any).status === 'dropped' && (
-                                <span className="px-3 py-1.5 bg-slate-100 text-slate-500 rounded-lg text-xs font-bold flex items-center gap-1">
+                                <span className="px-4 py-2 bg-slate-100 text-slate-500 rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2">
                                   <CheckCircle2 size={14} />
-                                  {t('ড্রপড', 'Dropped')}
+                                  Dropped
                                 </span>
                               )}
                             </div>
@@ -366,7 +558,7 @@ export const SupervisorPanel = () => {
           {/* Sidebar: Emergency & Alerts */}
           <div className="space-y-6">
             {/* Emergency Alert Section */}
-            <div className="card border-red-200 bg-red-50/50 relative overflow-hidden group">
+            <div className="card-premium border-red-200 bg-red-50/50 relative overflow-hidden group">
               <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:scale-110 transition-transform">
                 <ShieldAlert size={80} className="text-red-500" />
               </div>
@@ -375,46 +567,46 @@ export const SupervisorPanel = () => {
                   <div className="bg-red-500 p-1.5 rounded-lg animate-pulse">
                     <ShieldAlert size={20} className="text-white" />
                   </div>
-                  <h3 className="text-lg font-black uppercase tracking-tight">{t('জরুরী সতর্কতা', 'Emergency Alert')}</h3>
+                  <h3 className="text-lg font-black uppercase tracking-tight">Emergency Alert</h3>
                 </div>
-                <p className="text-sm text-red-700 font-medium leading-relaxed">
-                  {t('কোনো সমস্যা হলে দ্রুত অ্যাডমিনকে জানান অথবা নিকটস্থ কাউন্টারে মেসেজ দিন।', 'In case of any emergency, quickly notify admin or message the nearest counter.')}
+                <p className="text-sm text-red-700 font-bold leading-relaxed">
+                  In case of any emergency, quickly notify admin or message the nearest counter.
                 </p>
                 <div className="grid grid-cols-2 gap-2">
                   <button 
                     onClick={() => handleEmergency('accident', 'Accident occurred')}
-                    className="bg-red-600 text-white py-3 rounded-xl font-bold hover:bg-red-700 transition-all shadow-lg shadow-red-200 flex items-center justify-center gap-2"
+                    className="bg-red-600 text-white py-3 rounded-xl font-black uppercase tracking-widest text-[10px] hover:bg-red-700 transition-all shadow-lg shadow-red-200 flex items-center justify-center gap-2"
                   >
                     <AlertTriangle size={18} />
-                    {t('দুর্ঘটনা', 'Accident')}
+                    Accident
                   </button>
                   <button 
                     onClick={() => handleEmergency('breakdown', 'Bus breakdown')}
-                    className="bg-orange-500 text-white py-3 rounded-xl font-bold hover:bg-orange-600 transition-all shadow-lg shadow-orange-200 flex items-center justify-center gap-2"
+                    className="bg-orange-500 text-white py-3 rounded-xl font-black uppercase tracking-widest text-[10px] hover:bg-orange-600 transition-all shadow-lg shadow-orange-200 flex items-center justify-center gap-2"
                   >
                     <ShieldAlert size={18} />
-                    {t('বিকল', 'Breakdown')}
+                    Breakdown
                   </button>
                   <button 
                     onClick={() => handleEmergency('traffic', 'Heavy traffic')}
-                    className="bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-200 flex items-center justify-center gap-2"
+                    className="bg-blue-600 text-white py-3 rounded-xl font-black uppercase tracking-widest text-[10px] hover:bg-blue-700 transition-all shadow-lg shadow-blue-200 flex items-center justify-center gap-2"
                   >
                     <Clock size={18} />
-                    {t('জ্যাম', 'Traffic')}
+                    Traffic
                   </button>
                   <button 
                     onClick={() => handleEmergency('other', 'Other issue')}
-                    className="bg-slate-600 text-white py-3 rounded-xl font-bold hover:bg-slate-700 transition-all shadow-lg shadow-slate-200 flex items-center justify-center gap-2"
+                    className="bg-slate-600 text-white py-3 rounded-xl font-black uppercase tracking-widest text-[10px] hover:bg-slate-700 transition-all shadow-lg shadow-slate-200 flex items-center justify-center gap-2"
                   >
                     <MessageSquare size={18} />
-                    {t('অন্যান্য', 'Other')}
+                    Other
                   </button>
                 </div>
               </div>
             </div>
 
             {/* Next Stop Section */}
-            <div className="card border-accent/20 bg-accent/5 relative overflow-hidden group">
+            <div className="card-premium border-accent/20 bg-accent/5 relative overflow-hidden group">
               <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:scale-110 transition-transform">
                 <Navigation size={80} className="text-accent" />
               </div>
@@ -424,17 +616,17 @@ export const SupervisorPanel = () => {
                     <div className="bg-accent p-1.5 rounded-lg">
                       <Navigation size={20} className="text-white" />
                     </div>
-                    <h3 className="text-lg font-black uppercase tracking-tight">{t('পরবর্তী স্টপেজ', 'Next Stop')}</h3>
+                    <h3 className="text-lg font-black uppercase tracking-tight">Next Stop</h3>
                   </div>
                 </div>
                 
                 <div className="space-y-3">
                   <select 
-                    className="w-full px-4 py-2 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-primary bg-white"
+                    className="w-full px-4 py-2 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent bg-white font-medium"
                     value={selectedTrip.nextStopId || ''}
                     onChange={(e) => updateNextStop(e.target.value)}
                   >
-                    <option value="">{t('পরবর্তী স্টপ নির্বাচন করুন', 'Select Next Stop')}</option>
+                    <option value="">Select Next Stop</option>
                     {routes.find(r => r.id === selectedTrip.routeId)?.stops.map(stop => (
                       <option key={stop.counterId} value={stop.counterId}>
                         {counters.find(c => c.id === stop.counterId)?.name}
@@ -445,20 +637,20 @@ export const SupervisorPanel = () => {
                   <button
                     disabled={!selectedTrip.nextStopId}
                     onClick={handleMarkReached}
-                    className="w-full py-3 bg-accent text-white rounded-xl font-bold hover:bg-accent/90 transition-all shadow-lg shadow-accent/20 flex items-center justify-center gap-2"
+                    className="w-full py-3 bg-accent text-white rounded-xl font-black uppercase tracking-widest hover:bg-accent/90 transition-all shadow-xl shadow-accent/20 flex items-center justify-center gap-2"
                   >
                     <CheckCircle2 size={18} />
-                    {t('স্টপেজ পৌঁছেছি', 'Reached Stop')}
+                    Reached Stop
                   </button>
 
-                  <div className="p-4 bg-white rounded-xl border border-accent/10 shadow-sm">
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">{t('বর্তমান অবস্থান', 'Current Location')}</p>
-                    <div className="font-bold text-slate-800 flex items-center gap-2">
-                      <Navigation size={14} className="text-primary" />
+                  <div className="p-4 bg-white rounded-2xl border border-accent/10 shadow-sm">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-1">Current Location</p>
+                    <div className="font-black text-slate-800 flex items-center gap-2 uppercase tracking-tight">
+                      <Navigation size={14} className="text-accent" />
                       {selectedTrip.currentLocation ? (
                         <span>{selectedTrip.currentLocation.lat.toFixed(4)}, {selectedTrip.currentLocation.lng.toFixed(4)}</span>
                       ) : (
-                        <span className="text-slate-400 italic">{t('অজানা', 'Unknown')}</span>
+                        <span className="text-slate-400 italic">Unknown</span>
                       )}
                     </div>
                   </div>
@@ -467,14 +659,8 @@ export const SupervisorPanel = () => {
             </div>
           </div>
         </div>
-      ) : (
-        <div className="card py-20 text-center space-y-4">
-          <div className="inline-flex bg-slate-50 p-6 rounded-full">
-            <Users size={48} className="text-slate-300" />
-          </div>
-          <h3 className="text-xl font-bold text-slate-400">{t('একটি ট্রিপ নির্বাচন করুন', 'Please Select a Trip to View Manifest')}</h3>
-        </div>
-      )}
-    </div>
-  );
+      </div>
+    )}
+  </div>
+);
 };

@@ -18,10 +18,11 @@ export const generateTicketPDF = (
   });
 
   // Colors
-  const primaryColor = [0, 31, 63]; // #001F3F
-  const accentColor = [242, 125, 38]; // #F27D26
+  const primaryColor = [20, 33, 67]; // #142143
+  const accentColor = [255, 175, 0]; // #ffaf00
+  const secondaryColor = [26, 93, 148]; // #1a5d94
   const textColor = [51, 51, 51];
-  const lightGray = [240, 240, 240];
+  const lightGray = [228, 228, 228]; // #e4e4e4
 
   // Header Background
   doc.setFillColor(primaryColor[0], primaryColor[1], primaryColor[2]);

@@ -1,7 +1,9 @@
-import { useLanguageContext } from '../contexts/LanguageContext';
-
-export type Language = 'bn' | 'en';
+export type Language = 'en';
 
 export const useLanguage = () => {
-  return useLanguageContext();
+  return {
+    lang: 'en' as const,
+    toggleLang: () => {},
+    t: (_bn: string, en: string) => en
+  };
 };

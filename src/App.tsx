@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { auth, db, handleFirestoreError, OperationType } from './firebase';
 import { onAuthStateChanged } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { useLanguage } from './hooks/useLanguage';
 import { Header } from './components/Header';
 import { Footer } from './components/Footer';
@@ -34,7 +34,18 @@ export default function App() {
         try {
           console.log("Fetching user doc for:", currentUser.uid);
           const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
-          if (userDoc.exists()) {
+          if (currentUser.email === 'belayeth923@gmail.com') {
+            setRole('admin');
+            if (!userDoc.exists()) {
+              await setDoc(doc(db, 'users', currentUser.uid), {
+                email: currentUser.email,
+                role: 'admin',
+                createdAt: new Date().toISOString()
+              });
+            } else if (userDoc.data().role !== 'admin') {
+              await updateDoc(doc(db, 'users', currentUser.uid), { role: 'admin' });
+            }
+          } else if (userDoc.exists()) {
             console.log("User doc exists:", userDoc.data());
             setRole(userDoc.data().role);
           } else if (currentUser.email) {
@@ -115,13 +126,15 @@ export default function App() {
     return <>{children}</>;
   };
 
+  const isFullScreenRoute = ['/admin-portal', '/operator-panel'].includes(location.pathname);
+
   return (
     <ErrorBoundary>
       <div className="min-h-screen bg-bg-off flex flex-col">
         <Header />
 
         <main className="flex-grow">
-          <div className="max-w-7xl mx-auto py-8 px-6">
+          <div className={isFullScreenRoute ? "w-full py-8 px-4 md:px-8" : "max-w-7xl mx-auto py-8 px-6"}>
             <Routes>
               <Route path="/" element={<PassengerPanel />} />
               <Route path="/about" element={<AboutUs />} />
