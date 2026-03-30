@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, onSnapshot, query, where, updateDoc, doc, getDocs, getDoc } from 'firebase/firestore';
-import { Trip, Booking, Passenger, Route, Counter, Crew } from '../types';
+import { Trip, Booking, Passenger, Route, Counter, Crew, Bus } from '../types';
 import { useLanguage } from '../hooks/useLanguage';
-import { Users, CheckCircle2, AlertTriangle, Phone, MapPin, Search, QrCode, ShieldAlert, MessageSquare, Clock, Navigation, LogOut, Calendar, ChevronRight, History, Activity } from 'lucide-react';
+import { SeatMap } from '../components/SeatMap';
+import { Users, CheckCircle2, AlertTriangle, Phone, MapPin, Search, QrCode, ShieldAlert, MessageSquare, Clock, Navigation, LogOut, Calendar, ChevronRight, History as HistoryIcon, Activity, LayoutGrid } from 'lucide-react';
 import { format } from 'date-fns';
 import { formatInTimeZone } from 'date-fns-tz';
 import { Login } from '../components/Login';
+import { RealTimeClock } from '../components/RealTimeClock';
 
 const TZ = 'Asia/Dhaka';
 
@@ -23,8 +25,10 @@ export const SupervisorPanel = () => {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [passengers, setPassengers] = useState<Passenger[]>([]);
   const [routes, setRoutes] = useState<Route[]>([]);
+  const [buses, setBuses] = useState<Bus[]>([]);
   const [counters, setCounters] = useState<Counter[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [manifestTab, setManifestTab] = useState<'list' | 'seats'>('list');
   const [isTracking, setIsTracking] = useState(false);
   const [droppingRemarks, setDroppingRemarks] = useState<{[key: string]: string}>({});
   const [activeTab, setActiveTab] = useState<'live' | 'history'>('live');
@@ -49,6 +53,9 @@ export const SupervisorPanel = () => {
     const unsubCounters = onSnapshot(collection(db, 'counters'), (snapshot) => {
       setCounters(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Counter)));
     });
+    const unsubBuses = onSnapshot(collection(db, 'buses'), (snapshot) => {
+      setBuses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Bus)));
+    });
     const unsubPassengers = onSnapshot(collection(db, 'passengers'), (snapshot) => {
       setPassengers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Passenger)));
     });
@@ -56,6 +63,7 @@ export const SupervisorPanel = () => {
     return () => {
       unsubTrips();
       unsubRoutes();
+      unsubBuses();
       unsubCounters();
       unsubPassengers();
     };
@@ -257,11 +265,19 @@ export const SupervisorPanel = () => {
   return (
     <div className="space-y-8">
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <h2 className="text-2xl font-black flex items-center gap-2 text-slate-800 uppercase tracking-tight">
-          <Users className="text-accent" />
-          Welcome, <span className="text-accent">{supervisorProfile.name}</span>
-        </h2>
         <div className="flex items-center gap-4">
+          <h2 className="text-2xl font-black flex items-center gap-2 text-slate-800 uppercase tracking-tight">
+            <Users className="text-accent" />
+            Welcome, <span className="text-accent">{supervisorProfile.name}</span>
+          </h2>
+          <div className="hidden sm:block">
+            <RealTimeClock />
+          </div>
+        </div>
+        <div className="flex items-center gap-4">
+          <div className="sm:hidden">
+            <RealTimeClock />
+          </div>
           <button 
             onClick={handleLogout}
             className="px-6 py-3 bg-red-50 text-red-600 rounded-2xl font-black uppercase tracking-widest flex items-center gap-2 hover:bg-red-100 transition-all shadow-sm border border-red-100"
@@ -273,7 +289,7 @@ export const SupervisorPanel = () => {
       </div>
 
       {/* Tabs and Date Filter */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 bg-white p-6 rounded-[32px] shadow-sm border border-slate-100">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 glass-hard p-6 rounded-[32px] border-none">
         <div className="flex bg-slate-100 p-1.5 rounded-2xl w-fit">
           <button
             onClick={() => {
@@ -301,7 +317,7 @@ export const SupervisorPanel = () => {
               activeTab === 'history' ? "bg-white text-accent shadow-md" : "text-slate-500 hover:text-slate-700"
             )}
           >
-            <History size={18} />
+            <HistoryIcon size={18} />
             Trip History
           </button>
         </div>
@@ -401,7 +417,7 @@ export const SupervisorPanel = () => {
           ) : (
             <div className="col-span-full py-32 text-center space-y-6 bg-white rounded-[3rem] border-2 border-dashed border-slate-100">
               <div className="inline-flex bg-slate-50 p-10 rounded-full text-slate-200">
-                {activeTab === 'live' ? <Activity size={64} /> : <History size={64} />}
+                {activeTab === 'live' ? <Activity size={64} /> : <HistoryIcon size={64} />}
               </div>
               <div className="space-y-2">
                 <h3 className="text-2xl font-black text-slate-800">
@@ -454,104 +470,155 @@ export const SupervisorPanel = () => {
           <div className="lg:col-span-2 space-y-6">
             <div className="card-premium">
               <div className="flex justify-between items-center mb-6">
-                <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight">Passenger Manifest</h3>
-                <div className="relative">
-                  <Search className="absolute left-3 top-2.5 text-slate-400" size={18} />
-                  <input
-                    type="text"
-                    placeholder="Search (Name, Phone or Ticket ID)..."
-                    className="pl-10 pr-4 py-2 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent text-sm w-64 font-medium"
-                    value={searchQuery}
-                    onChange={e => setSearchQuery(e.target.value)}
+                <div className="flex items-center gap-4">
+                  <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight">Passenger Manifest</h3>
+                  <div className="flex bg-slate-100 p-1 rounded-xl">
+                    <button 
+                      onClick={() => setManifestTab('list')}
+                      className={cn(
+                        "px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2",
+                        manifestTab === 'list' ? "bg-white text-accent shadow-sm" : "text-slate-500 hover:text-slate-700"
+                      )}
+                    >
+                      <Users size={14} />
+                      List View
+                    </button>
+                    <button 
+                      onClick={() => setManifestTab('seats')}
+                      className={cn(
+                        "px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2",
+                        manifestTab === 'seats' ? "bg-white text-accent shadow-sm" : "text-slate-500 hover:text-slate-700"
+                      )}
+                    >
+                      <LayoutGrid size={14} />
+                      Seat View
+                    </button>
+                  </div>
+                </div>
+                {manifestTab === 'list' && (
+                  <div className="relative">
+                    <Search className="absolute left-3 top-2.5 text-slate-400" size={18} />
+                    <input
+                      type="text"
+                      placeholder="Search (Name, Phone or Ticket ID)..."
+                      className="pl-10 pr-4 py-2 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent text-sm w-64 font-medium"
+                      value={searchQuery}
+                      onChange={e => setSearchQuery(e.target.value)}
+                    />
+                  </div>
+                )}
+              </div>
+
+              {manifestTab === 'list' ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="border-b border-slate-100 text-slate-400 text-[10px] font-black uppercase tracking-[0.2em]">
+                        <th className="pb-4">Passenger</th>
+                        <th className="pb-4">Seats</th>
+                        <th className="pb-4">Boarding/Dropping</th>
+                        <th className="pb-4 text-right">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {filteredBookings.map(booking => {
+                        const passenger = passengers.find(p => p.id === booking.passengerId);
+                        const boardingCounter = counters.find(c => c.id === booking.boardingStopId);
+                        const isBoarded = (booking as any).status === 'boarded';
+
+                        return (
+                          <tr key={booking.id} className="group hover:bg-accent/5 transition-all">
+                            <td className="py-4">
+                              <div className="font-black text-slate-800 uppercase tracking-tight group-hover:text-accent transition-colors">{passenger?.name}</div>
+                              <div className="text-xs text-slate-500 flex items-center gap-1 font-bold">
+                                <Phone size={10} /> {passenger?.phone}
+                              </div>
+                              <div className="text-[10px] text-slate-400 font-mono mt-1">ID: {booking.id}</div>
+                            </td>
+                            <td className="py-4">
+                              <div className="flex gap-1">
+                                {booking.seats.map(s => (
+                                  <span key={s} className="bg-accent/10 text-accent px-1.5 py-0.5 rounded-lg text-[10px] font-black uppercase tracking-wider">{s}</span>
+                                ))}
+                              </div>
+                            </td>
+                            <td className="py-4 text-sm text-slate-500 font-medium">
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-1">
+                                  <span className="text-[10px] font-black text-accent uppercase tracking-widest">From:</span>
+                                  {boardingCounter?.name || 'Online'}
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  <span className="text-[10px] font-black text-orange-600 uppercase tracking-widest">To:</span>
+                                  {counters.find(c => c.id === booking.droppingStopId)?.name || 'N/A'}
+                                </div>
+                              </div>
+                            </td>
+                            <td className="py-4 text-right">
+                              <div className="flex flex-col items-end gap-2">
+                                {!isBoarded && (
+                                  <button
+                                    onClick={() => handleBoarding(booking.id)}
+                                    className="px-4 py-2 bg-accent text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-accent/90 transition-all shadow-lg shadow-accent/20"
+                                  >
+                                    Mark Boarded
+                                  </button>
+                                )}
+                                {isBoarded && (booking as any).status !== 'dropped' && (
+                                  <div className="space-y-2 w-full max-w-[200px]">
+                                    <input 
+                                      type="text"
+                                      placeholder="Remarks..."
+                                      className="w-full px-3 py-2 text-[10px] border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent font-medium"
+                                      value={droppingRemarks[booking.id] || ''}
+                                      onChange={e => setDroppingRemarks({...droppingRemarks, [booking.id]: e.target.value})}
+                                    />
+                                    <button
+                                      onClick={() => handleDropping(booking.id)}
+                                      className="w-full px-4 py-2 bg-emerald-500 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-200"
+                                    >
+                                      Mark Dropped
+                                    </button>
+                                  </div>
+                                )}
+                                {(booking as any).status === 'dropped' && (
+                                  <span className="px-4 py-2 bg-slate-100 text-slate-500 rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2">
+                                    <CheckCircle2 size={14} />
+                                    Dropped
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="flex justify-center py-8">
+                  <SeatMap
+                    capacity={buses.find(b => b.id === selectedTrip.busId)?.capacity || 40}
+                    bookedSeats={bookings.filter(b => b.status === 'booked').flatMap(b => b.seats)}
+                    femaleBookedSeats={bookings.filter(b => b.status === 'booked').filter(b => {
+                      const p = passengers.find(pass => pass.id === b.passengerId);
+                      return p?.gender === 'female';
+                    }).flatMap(b => b.seats)}
+                    soldSeats={bookings.filter(b => b.status === 'sold' || b.status === 'confirmed' || (b as any).status === 'boarded' || (b as any).status === 'dropped').flatMap(b => b.seats)}
+                    femaleSoldSeats={bookings.filter(b => b.status === 'sold' || b.status === 'confirmed' || (b as any).status === 'boarded' || (b as any).status === 'dropped').filter(b => {
+                      const p = passengers.find(pass => pass.id === b.passengerId);
+                      return p?.gender === 'female';
+                    }).flatMap(b => b.seats)}
+                    selectedSeats={[]}
+                    lockedSeats={[]}
+                    onSeatClick={() => {}}
+                    bookings={bookings}
+                    passengers={passengers}
+                    counters={counters}
+                    isOperator={true}
                   />
                 </div>
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="w-full text-left">
-                  <thead>
-                    <tr className="border-b border-slate-100 text-slate-400 text-[10px] font-black uppercase tracking-[0.2em]">
-                      <th className="pb-4">Passenger</th>
-                      <th className="pb-4">Seats</th>
-                      <th className="pb-4">Boarding/Dropping</th>
-                      <th className="pb-4 text-right">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-50">
-                    {filteredBookings.map(booking => {
-                      const passenger = passengers.find(p => p.id === booking.passengerId);
-                      const boardingCounter = counters.find(c => c.id === booking.boardingStopId);
-                      const isBoarded = (booking as any).status === 'boarded';
-
-                      return (
-                        <tr key={booking.id} className="group hover:bg-accent/5 transition-all">
-                          <td className="py-4">
-                            <div className="font-black text-slate-800 uppercase tracking-tight group-hover:text-accent transition-colors">{passenger?.name}</div>
-                            <div className="text-xs text-slate-500 flex items-center gap-1 font-bold">
-                              <Phone size={10} /> {passenger?.phone}
-                            </div>
-                            <div className="text-[10px] text-slate-400 font-mono mt-1">ID: {booking.id}</div>
-                          </td>
-                          <td className="py-4">
-                            <div className="flex gap-1">
-                              {booking.seats.map(s => (
-                                <span key={s} className="bg-accent/10 text-accent px-1.5 py-0.5 rounded-lg text-[10px] font-black uppercase tracking-wider">{s}</span>
-                              ))}
-                            </div>
-                          </td>
-                          <td className="py-4 text-sm text-slate-500 font-medium">
-                            <div className="space-y-1">
-                              <div className="flex items-center gap-1">
-                                <span className="text-[10px] font-black text-accent uppercase tracking-widest">From:</span>
-                                {boardingCounter?.name || 'Online'}
-                              </div>
-                              <div className="flex items-center gap-1">
-                                <span className="text-[10px] font-black text-orange-600 uppercase tracking-widest">To:</span>
-                                {counters.find(c => c.id === booking.droppingStopId)?.name || 'N/A'}
-                              </div>
-                            </div>
-                          </td>
-                          <td className="py-4 text-right">
-                            <div className="flex flex-col items-end gap-2">
-                              {!isBoarded && (
-                                <button
-                                  onClick={() => handleBoarding(booking.id)}
-                                  className="px-4 py-2 bg-accent text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-accent/90 transition-all shadow-lg shadow-accent/20"
-                                >
-                                  Mark Boarded
-                                </button>
-                              )}
-                              {isBoarded && (booking as any).status !== 'dropped' && (
-                                <div className="space-y-2 w-full max-w-[200px]">
-                                  <input 
-                                    type="text"
-                                    placeholder="Remarks..."
-                                    className="w-full px-3 py-2 text-[10px] border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent font-medium"
-                                    value={droppingRemarks[booking.id] || ''}
-                                    onChange={e => setDroppingRemarks({...droppingRemarks, [booking.id]: e.target.value})}
-                                  />
-                                  <button
-                                    onClick={() => handleDropping(booking.id)}
-                                    className="w-full px-4 py-2 bg-emerald-500 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-200"
-                                  >
-                                    Mark Dropped
-                                  </button>
-                                </div>
-                              )}
-                              {(booking as any).status === 'dropped' && (
-                                <span className="px-4 py-2 bg-slate-100 text-slate-500 rounded-xl text-xs font-black uppercase tracking-widest flex items-center gap-2">
-                                  <CheckCircle2 size={14} />
-                                  Dropped
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+              )}
             </div>
           </div>
 

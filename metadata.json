@@ -1,5 +1,5 @@
 {
   "name": "SwiftLine Bus Ticketing",
-  "description": "High-end, dedicated, single-operator bus ticketing and fleet management web application.",
+  "description": "High-end, dedicated, single-operator bus ticketing and fleet management web application with advanced admin panel, operator POS, and passenger profile management.",
   "requestFramePermissions": ["geolocation"]
 }

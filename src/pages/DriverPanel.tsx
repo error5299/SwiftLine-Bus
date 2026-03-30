@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, onSnapshot, query, where, getDocs, updateDoc, doc } from 'firebase/firestore';
 import { Trip, Crew, Route, Counter, Booking, Passenger } from '../types';
-import { Clock, Navigation, Bus as BusIcon, LogOut, Activity, History, Calendar, ChevronRight, ShieldAlert, AlertTriangle, MessageSquare, CheckCircle2, Users, MapPin, Search, QrCode } from 'lucide-react';
+import { Clock, Navigation, Bus as BusIcon, LogOut, Activity, History as HistoryIcon, Calendar, ChevronRight, ShieldAlert, AlertTriangle, MessageSquare, CheckCircle2, Users, MapPin, Search, QrCode } from 'lucide-react';
 import { format } from 'date-fns';
 import { Login } from '../components/Login';
+import { RealTimeClock } from '../components/RealTimeClock';
 
 const cn = (...classes: (string | boolean | undefined)[]) => classes.filter(Boolean).join(' ');
 
@@ -218,23 +219,33 @@ export const DriverPanel: React.FC = () => {
     <div className="max-w-7xl mx-auto px-4 py-8">
       <div className="space-y-8">
         <div className="flex flex-wrap items-center justify-between gap-4">
-          <h2 className="text-2xl font-black flex items-center gap-2 text-slate-800 uppercase tracking-tight">
-            <BusIcon className="text-accent" />
-            Driver Panel: <span className="text-accent">{driverProfile.name}</span>
-          </h2>
-          <button onClick={handleLogout} className="px-6 py-3 bg-red-50 text-red-600 rounded-2xl font-black uppercase tracking-widest flex items-center gap-2 hover:bg-red-100 transition-all border border-red-100">
-            <LogOut size={18} />
-            <span>Logout</span>
-          </button>
+          <div className="flex items-center gap-4">
+            <h2 className="text-2xl font-black flex items-center gap-2 text-slate-800 uppercase tracking-tight">
+              <BusIcon className="text-accent" />
+              Driver Panel: <span className="text-accent">{driverProfile.name}</span>
+            </h2>
+            <div className="hidden sm:block">
+              <RealTimeClock />
+            </div>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="sm:hidden">
+              <RealTimeClock />
+            </div>
+            <button onClick={handleLogout} className="px-6 py-3 bg-red-50 text-red-600 rounded-2xl font-black uppercase tracking-widest flex items-center gap-2 hover:bg-red-100 transition-all border border-red-100">
+              <LogOut size={18} />
+              <span>Logout</span>
+            </button>
+          </div>
         </div>
 
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 bg-white p-6 rounded-[32px] shadow-sm border border-slate-100">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 glass-hard p-6 rounded-[32px] border-none">
           <div className="flex bg-slate-100 p-1.5 rounded-2xl w-fit">
             <button onClick={() => { setActiveTab('live'); setSelectedTrip(null); }} className={cn("px-8 py-3 rounded-xl font-black uppercase tracking-widest text-sm transition-all flex items-center gap-2", activeTab === 'live' ? "bg-white text-accent shadow-md" : "text-slate-500 hover:text-slate-700")}>
               <Activity size={18} /> Live Trip
             </button>
             <button onClick={() => { setActiveTab('history'); setSelectedTrip(null); }} className={cn("px-8 py-3 rounded-xl font-black uppercase tracking-widest text-sm transition-all flex items-center gap-2", activeTab === 'history' ? "bg-white text-accent shadow-md" : "text-slate-500 hover:text-slate-700")}>
-              <History size={18} /> Trip History
+              <HistoryIcon size={18} /> Trip History
             </button>
           </div>
           

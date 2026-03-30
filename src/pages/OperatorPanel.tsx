@@ -4,11 +4,14 @@ import { collection, onSnapshot, addDoc, updateDoc, doc, query, where, getDocs, 
 import { Counter, Trip, Booking, Passenger, SeatLock, Route, Bus, Operator, Crew } from '../types';
 import { useLanguage } from '../hooks/useLanguage';
 import { SeatMap } from '../components/SeatMap';
-import { Bus as BusIcon, Search, User, Phone, Mail, Printer, MapPin, Wallet, Clock, CheckCircle2, AlertCircle, Download, CreditCard, LogOut, Users, Calendar } from 'lucide-react';
+import { Bus as BusIcon, Search, User, Phone, Mail, Printer, MapPin, Wallet, Clock, CheckCircle2, AlertCircle, Download, CreditCard, LogOut, Users, Calendar, X } from 'lucide-react';
+import { motion } from 'motion/react';
 import { format } from 'date-fns';
 import { Login } from '../components/Login';
 import { QRCodeSVG, QRCodeCanvas } from 'qrcode.react';
 import { generateTicketPDF, printTicketHTML } from '../utils/ticketGenerator';
+import { generateChallanPDF } from '../utils/challanGenerator';
+import { RealTimeClock } from '../components/RealTimeClock';
 
 export const OperatorPanel = () => {
   const { t } = useLanguage();
@@ -30,6 +33,7 @@ export const OperatorPanel = () => {
   const [crew, setCrew] = useState<Crew[]>([]);
   const [selectedSeats, setSelectedSeats] = useState<string[]>([]);
   const [passengerData, setPassengerData] = useState({ name: '', phone: '', email: '', gender: 'male' as 'male' | 'female' });
+  const [lastPassengerData, setLastPassengerData] = useState<Partial<Passenger> | null>(null);
   const [boardingPoint, setBoardingPoint] = useState('');
   const [droppingPoint, setDroppingPoint] = useState('');
   const [isBooking, setIsBooking] = useState(false);
@@ -37,6 +41,9 @@ export const OperatorPanel = () => {
 
   const [localCrewIds, setLocalCrewIds] = useState<string[]>([]);
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
+  const [showChallanPreview, setShowChallanPreview] = useState(false);
+  const [challanUrl, setChallanUrl] = useState<string | null>(null);
+  const [isGeneratingChallan, setIsGeneratingChallan] = useState(false);
 
   useEffect(() => {
     if (selectedTrip) {
@@ -71,6 +78,7 @@ export const OperatorPanel = () => {
   const saveCrew = async () => {
     if (!selectedTrip) return;
     await updateDoc(doc(db, 'trips', selectedTrip.id), { crewIds: localCrewIds });
+    setSelectedTrip(prev => prev ? { ...prev, crewIds: localCrewIds } : null);
     setSaveStatus('Saved successfully.');
   };
 
@@ -119,6 +127,12 @@ export const OperatorPanel = () => {
       unsubCrew();
     };
   }, []);
+
+  useEffect(() => {
+    if (operatorProfile) {
+      setBoardingPoint(operatorProfile.counterId);
+    }
+  }, [operatorProfile]);
 
   useEffect(() => {
     if (!operatorProfile || !routes.length || !trips.length) {
@@ -361,6 +375,7 @@ export const OperatorPanel = () => {
       }
 
       setBookingSuccess(bookingData);
+      setLastPassengerData(passengerData);
       setSelectedSeats([]);
       setPassengerData({ name: '', phone: '', email: '', gender: 'male' });
     } catch (err) {
@@ -377,6 +392,7 @@ export const OperatorPanel = () => {
     const bus = buses.find(b => b.id === trip?.busId);
     const bPoint = counters.find(c => c.id === bookingSuccess.boardingStopId);
     const dPoint = counters.find(c => c.id === bookingSuccess.droppingStopId);
+    const passenger = lastPassengerData || passengers.find(p => p.id === bookingSuccess.passengerId);
 
     printTicketHTML(
       bookingSuccess,
@@ -385,7 +401,7 @@ export const OperatorPanel = () => {
       bPoint,
       dPoint,
       bus,
-      passengerData,
+      passenger,
       'ticket-qrcode'
     );
   };
@@ -397,6 +413,7 @@ export const OperatorPanel = () => {
     const bus = buses.find(b => b.id === trip?.busId);
     const bPoint = counters.find(c => c.id === bookingSuccess.boardingStopId);
     const dPoint = counters.find(c => c.id === bookingSuccess.droppingStopId);
+    const passenger = lastPassengerData || passengers.find(p => p.id === bookingSuccess.passengerId);
 
     generateTicketPDF(
       bookingSuccess,
@@ -405,7 +422,7 @@ export const OperatorPanel = () => {
       bPoint,
       dPoint,
       bus,
-      passengerData,
+      passenger,
       'ticket-qrcode'
     );
   };
@@ -448,30 +465,33 @@ export const OperatorPanel = () => {
 
   return (
     <div className="space-y-8">
-      <div className="flex justify-between items-center mb-8">
+      <div className="flex flex-col sm:flex-row justify-between items-center gap-4 mb-8">
         <div>
           <h1 className="text-3xl font-black uppercase tracking-tighter text-slate-900">Counter Dashboard</h1>
           <p className="text-sm font-bold text-slate-500 uppercase tracking-widest mt-1">{operatorProfile?.name} | {selectedCounter?.name}</p>
         </div>
-        <button 
-          onClick={handleLogout}
-          className="flex items-center gap-2 px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-        >
-          <LogOut size={20} />
-          <span>Logout</span>
-        </button>
+        <div className="flex items-center gap-4">
+          <RealTimeClock />
+          <button 
+            onClick={handleLogout}
+            className="flex items-center gap-2 px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors font-bold"
+          >
+            <LogOut size={20} />
+            <span>Logout</span>
+          </button>
+        </div>
       </div>
 
       <div className="grid lg:grid-cols-12 gap-8">
       {/* Left Column: Selection & POS */}
       <div className="lg:col-span-8 space-y-6">
-        <div className="card">
+        <div className="glass-hard p-8 rounded-[32px]">
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-xl font-black uppercase tracking-tight flex items-center gap-2">
               <BusIcon className="text-accent" />
               Ticket Booking POS
             </h2>
-            <div className="flex items-center gap-3 bg-slate-50 px-4 py-2 rounded-full border border-slate-100">
+            <div className="flex items-center gap-3 bg-emerald-50 px-4 py-2 rounded-full border border-emerald-100">
               <Wallet className="text-emerald-600" size={18} />
               <span className="font-bold text-emerald-700">
                 ৳ {selectedCounter?.walletBalance.toLocaleString() || 0}
@@ -537,12 +557,43 @@ export const OperatorPanel = () => {
                   <h3 className="font-black text-slate-800 uppercase tracking-tight">{routes.find(r => r.id === selectedTrip.routeId)?.name}</h3>
                   <p className="text-sm text-slate-500 font-medium">{format(new Date(selectedTrip.departureTime), 'hh:mm a')} | Coach: {selectedTrip.coachNumber}</p>
                 </div>
-                <button 
-                  onClick={() => setSelectedTrip(null)}
-                  className="px-4 py-2 text-sm font-bold text-accent bg-white border border-accent/20 rounded-xl hover:bg-accent/5 transition-all"
-                >
-                  Change
-                </button>
+                <div className="flex items-center gap-3">
+                    <button 
+                      onClick={async () => {
+                        try {
+                          setIsGeneratingChallan(true);
+                          const latestTrip = trips.find(t => t.id === selectedTrip.id) || selectedTrip;
+                          const url = await generateChallanPDF(
+                            latestTrip,
+                            bookings,
+                            passengers,
+                            routes.find(r => r.id === latestTrip.routeId),
+                            buses.find(b => b.id === latestTrip.busId),
+                            counters,
+                            crew
+                          );
+                          setChallanUrl(url);
+                          setShowChallanPreview(true);
+                        } catch (error) {
+                          console.error('Challan generation failed:', error);
+                          alert('Failed to generate challan');
+                        } finally {
+                          setIsGeneratingChallan(false);
+                        }
+                      }}
+                      disabled={isGeneratingChallan}
+                      className="px-4 py-2 text-sm font-bold text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-xl hover:bg-emerald-100 transition-all flex items-center gap-2 disabled:opacity-50"
+                    >
+                      <Printer size={16} className={isGeneratingChallan ? "animate-spin" : ""} />
+                      {isGeneratingChallan ? 'Generating...' : 'Challan'}
+                    </button>
+                  <button 
+                    onClick={() => setSelectedTrip(null)}
+                    className="px-4 py-2 text-sm font-bold text-accent bg-white border border-accent/20 rounded-xl hover:bg-accent/5 transition-all"
+                  >
+                    Change
+                  </button>
+                </div>
               </div>
               
               <div className="grid md:grid-cols-2 gap-8">
@@ -572,7 +623,7 @@ export const OperatorPanel = () => {
                     const dPoint = counters.find(c => c.id === booking.droppingStopId);
                     const passenger = passengers.find(p => p.id === booking.passengerId);
                     
-                    generateTicketPDF(
+                    printTicketHTML(
                       booking,
                       trip,
                       route,
@@ -701,9 +752,9 @@ export const OperatorPanel = () => {
                     <div>
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Boarding</label>
                       <select
-                        className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-accent/50 focus:border-accent outline-none"
+                        className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-medium bg-slate-100 text-slate-500 cursor-not-allowed outline-none"
                         value={boardingPoint}
-                        onChange={e => setBoardingPoint(e.target.value)}
+                        disabled
                       >
                         <option value="">Select</option>
                         {selectedTrip.boardingPoints?.map(id => (
@@ -928,6 +979,55 @@ export const OperatorPanel = () => {
           </div>
         </div>
       </div>
+      {/* Challan Preview Modal */}
+      {showChallanPreview && challanUrl && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white rounded-3xl shadow-2xl w-full max-w-5xl h-[90vh] flex flex-col overflow-hidden"
+          >
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-white">
+              <div>
+                <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">Challan Preview</h2>
+                <p className="text-sm text-slate-500 font-medium">Review and print the trip challan</p>
+              </div>
+              <div className="flex items-center gap-3">
+                <button 
+                  onClick={() => {
+                    const iframe = document.getElementById('challan-iframe') as HTMLIFrameElement;
+                    if (iframe && iframe.contentWindow) {
+                      iframe.contentWindow.print();
+                    }
+                  }}
+                  className="px-6 py-2.5 bg-emerald-600 text-white font-black rounded-xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-200 flex items-center gap-2 uppercase tracking-widest text-xs"
+                >
+                  <Printer size={16} />
+                  Print PDF
+                </button>
+                <button 
+                  onClick={() => {
+                    setShowChallanPreview(false);
+                    if (challanUrl) URL.revokeObjectURL(challanUrl);
+                    setChallanUrl(null);
+                  }}
+                  className="p-2.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl transition-all"
+                >
+                  <X size={24} />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 bg-slate-100 p-4 overflow-hidden">
+              <iframe 
+                id="challan-iframe"
+                src={challanUrl} 
+                className="w-full h-full rounded-xl border-none bg-white shadow-inner"
+                title="Challan Preview"
+              />
+            </div>
+          </motion.div>
+        </div>
+      )}
     </div>
   </div>
   );

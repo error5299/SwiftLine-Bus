@@ -1,13 +1,12 @@
 import React, { useState } from 'react';
 import { useLanguage } from '../hooks/useLanguage';
 import { motion, AnimatePresence } from 'motion/react';
-import { Search, Ticket, Phone, Navigation, Download, Clock, MapPin, Bus as BusIcon, CheckCircle2 } from 'lucide-react';
+import { Search, Ticket, Phone, Navigation, Download, Clock, MapPin, Bus as BusIcon, CheckCircle2, Printer } from 'lucide-react';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
 import { Booking, Trip, Route, Counter, Passenger, Bus } from '../types';
 import { format } from 'date-fns';
-import { generateTicketPDF } from '../utils/ticketGenerator';
-import { QRCodeCanvas } from 'qrcode.react';
+import { generateTicketPDF, printTicketHTML } from '../utils/ticketGenerator';
 
 export const TrackTicket: React.FC = () => {
   const { t } = useLanguage();
@@ -86,6 +85,23 @@ export const TrackTicket: React.FC = () => {
     const dropping = counters.find(c => c.id === booking.droppingStopId);
 
     generateTicketPDF(
+      booking,
+      trip || undefined,
+      route || undefined,
+      boarding,
+      dropping,
+      bus || undefined,
+      passenger || undefined,
+      'ticket-qrcode'
+    );
+  };
+
+  const printETicket = () => {
+    if (!booking) return;
+    const boarding = counters.find(c => c.id === booking.boardingStopId);
+    const dropping = counters.find(c => c.id === booking.droppingStopId);
+
+    printTicketHTML(
       booking,
       trip || undefined,
       route || undefined,
@@ -201,16 +217,21 @@ export const TrackTicket: React.FC = () => {
                   </div>
                 </div>
 
-                <button 
-                  onClick={downloadETicket}
-                  className="w-full py-4 bg-slate-50 text-primary font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-slate-100 transition-all"
-                >
-                  <Download size={18} />
-                  Download Ticket
-                </button>
-                {/* Hidden QR Code for PDF generation */}
-                <div className="hidden">
-                  <QRCodeCanvas id="ticket-qrcode" value={booking.id} size={200} level="H" includeMargin />
+                <div className="flex gap-3">
+                  <button 
+                    onClick={printETicket}
+                    className="flex-1 py-4 bg-slate-50 text-primary font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-slate-100 transition-all"
+                  >
+                    <Printer size={18} />
+                    Print
+                  </button>
+                  <button 
+                    onClick={downloadETicket}
+                    className="flex-1 py-4 bg-slate-50 text-primary font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-slate-100 transition-all"
+                  >
+                    <Download size={18} />
+                    Download
+                  </button>
                 </div>
               </div>
 

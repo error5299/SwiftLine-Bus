@@ -1,9 +1,10 @@
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { format } from 'date-fns';
+import QRCode from 'qrcode';
 import { Booking, Trip, Route, Counter, Bus, Passenger } from '../types';
 
-export const getTicketHTML = (
+export const getTicketHTML = async (
   booking: Booking,
   trip: Trip | undefined,
   route: Route | undefined,
@@ -14,9 +15,23 @@ export const getTicketHTML = (
   qrCodeElementId: string = 'ticket-qrcode'
 ) => {
   let qrCodeImg = '';
-  const canvas = document.getElementById(qrCodeElementId) as HTMLCanvasElement;
-  if (canvas) {
-    qrCodeImg = canvas.toDataURL('image/png');
+  try {
+    // Generate QR code directly using the qrcode library for better reliability
+    qrCodeImg = await QRCode.toDataURL(booking.id, {
+      margin: 1,
+      width: 400,
+      color: {
+        dark: '#17252A',
+        light: '#FEFFFF'
+      }
+    });
+  } catch (err) {
+    console.error('QR Code generation failed:', err);
+    // Fallback to DOM canvas if library fails for some reason
+    const canvas = document.getElementById(qrCodeElementId) as HTMLCanvasElement;
+    if (canvas) {
+      qrCodeImg = canvas.toDataURL('image/png');
+    }
   }
 
   const formattedDate = trip ? format(new Date(trip.departureTime), 'dd MMM yyyy, hh:mm a') : 'N/A';
@@ -144,7 +159,7 @@ export const printTicketHTML = async (
   passengerData: Partial<Passenger> | undefined,
   qrCodeElementId: string = 'ticket-qrcode'
 ) => {
-  const htmlContent = getTicketHTML(booking, trip, route, boarding, dropping, bus, passengerData, qrCodeElementId);
+  const htmlContent = await getTicketHTML(booking, trip, route, boarding, dropping, bus, passengerData, qrCodeElementId);
   const printWindow = window.open('', '_blank');
   if (printWindow) {
     printWindow.document.write(`
@@ -193,7 +208,7 @@ export const generateTicketPDF = async (
   container.style.position = 'absolute';
   container.style.left = '-9999px';
   container.style.top = '0';
-  container.innerHTML = getTicketHTML(booking, trip, route, boarding, dropping, bus, passengerData, qrCodeElementId);
+  container.innerHTML = await getTicketHTML(booking, trip, route, boarding, dropping, bus, passengerData, qrCodeElementId);
 
   document.body.appendChild(container);
 

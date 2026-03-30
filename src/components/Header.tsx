@@ -7,6 +7,8 @@ import { useLanguage } from '../hooks/useLanguage';
 import { Bus, Search, Info, Ticket, Navigation, Phone, User, LogOut, Menu, X, Shield, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
+import { RealTimeClock } from './RealTimeClock';
+
 export const Header: React.FC = () => {
   const { t } = useLanguage();
   const navigate = useNavigate();
@@ -70,18 +72,24 @@ export const Header: React.FC = () => {
   };
 
   return (
-    <header className={`glass-header transition-all duration-300 ${scrolled ? 'py-3 shadow-lg' : 'py-5'}`}>
-      <div className="max-w-7xl mx-auto px-6 flex justify-between items-center">
+    <header className={`sticky top-0 z-50 transition-all duration-500 h-20 flex items-center ${scrolled ? 'glass-hard shadow-lg' : 'bg-white/95 backdrop-blur-md border-b border-slate-100'}`}>
+      <div className="max-w-7xl mx-auto px-6 w-full flex justify-between items-center">
         {/* Brand Logo */}
-        <Link 
-          to="/"
-          className="flex items-center gap-2 cursor-pointer group" 
-        >
-          <div className="bg-primary p-2 rounded-xl group-hover:scale-110 transition-transform">
-            <Bus className="text-white" size={24} />
+        <div className="flex items-center gap-4">
+          <Link 
+            to="/"
+            className="flex items-center gap-2 cursor-pointer group" 
+          >
+            <div className="bg-primary p-2 rounded-xl group-hover:scale-110 transition-transform">
+              <Bus className="text-white" size={24} />
+            </div>
+            <span className="text-2xl font-bold tracking-tighter text-primary">SwiftLine</span>
+          </Link>
+          
+          <div className="hidden sm:block">
+            <RealTimeClock />
           </div>
-          <span className="text-2xl font-bold tracking-tighter text-primary">SwiftLine</span>
-        </Link>
+        </div>
 
         {/* Navigation Menu (Center) - Desktop */}
         <nav className="hidden lg:flex items-center gap-1 bg-slate-100/50 p-1 rounded-2xl">
@@ -103,6 +111,9 @@ export const Header: React.FC = () => {
 
         {/* Utility Actions (Right) */}
         <div className="flex items-center gap-4">
+          <div className="sm:hidden">
+            <RealTimeClock />
+          </div>
           
           <div className="hidden lg:flex items-center gap-3">
             {user ? (

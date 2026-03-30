@@ -6,14 +6,19 @@ import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
 import { Counter, Operator, Route, Bus, Crew, Passenger, WalletTransaction, Trip, RouteStop, TripCounterTime, Booking, TripTemplate, CounterTimeTemplate } from '../types';
 import { useLanguage } from '../hooks/useLanguage';
-import { Plus, Edit2, Trash2, Wallet, Map, Bus as BusIcon, Users, UserCheck, ShieldCheck, Search, X, LogIn, Navigation, LayoutDashboard, TrendingUp, Activity, Clock, LogOut, Globe, Printer, Map as MapIcon, Star, Filter, ChevronRight, Wifi, Coffee, Zap, Info, MapPin } from 'lucide-react';
+import { Plus, Edit2, Trash2, Wallet, Map, Bus as BusIcon, Users, UserCheck, ShieldCheck, Search, X, LogIn, Navigation, LayoutDashboard, TrendingUp, Activity, Clock, LogOut, Globe, Printer, Map as MapIcon, Star, Filter, ChevronRight, Wifi, Coffee, Zap, Info, MapPin, History as HistoryIcon, AlertCircle, Shield, User } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 import { Login } from '../components/Login';
 import { RouteMapper } from '../components/RouteMapper';
 import { SeatMap } from '../components/SeatMap';
-import { QRCodeSVG, QRCodeCanvas } from 'qrcode.react';
-import { generateTicketPDF } from '../utils/ticketGenerator';
+import { generateTicketPDF, printTicketHTML } from '../utils/ticketGenerator';
 import { formatInTimeZone } from 'date-fns-tz';
 import { safeFormat, safeGetTime } from '../utils/dateUtils';
+import { RealTimeClock } from '../components/RealTimeClock';
+import { 
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
+  LineChart, Line, AreaChart, Area, PieChart, Pie, Cell 
+} from 'recharts';
 
 const TZ = 'Asia/Dhaka';
 
@@ -33,6 +38,15 @@ export const AdminPanel = () => {
   const [buses, setBuses] = useState<Bus[]>([]);
   const [crew, setCrew] = useState<Crew[]>([]);
   const [passengers, setPassengers] = useState<Passenger[]>([]);
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [securityLogs, setSecurityLogs] = useState<any[]>([]);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [securitySettings, setSecuritySettings] = useState({
+    ipWhitelisting: false,
+    twoFactorAuth: true,
+    sessionTimeout: 30,
+    allowedIPs: ['127.0.0.1', '192.168.1.1']
+  });
   
   const [user, setUser] = useState<any>(null);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -56,6 +70,22 @@ export const AdminPanel = () => {
     totalPassengers: passengers.length,
     todayTrips: trips.filter(t => new Date(t.departureTime).toDateString() === new Date().toDateString()).length
   };
+
+  const chartData = Array.from({ length: 7 }).map((_, i) => {
+    const date = new Date();
+    date.setDate(date.getDate() - i);
+    const dateStr = format(date, 'yyyy-MM-dd');
+    const dayBookings = bookings.filter(b => b.status === 'confirmed' && b.bookingDate?.startsWith(dateStr));
+    const dayRevenue = dayBookings.reduce((acc, b) => acc + (b.totalFare || 0), 0);
+    const dayTrips = trips.filter(t => t.date === dateStr).length;
+    return {
+      name: format(date, 'MMM dd'),
+      revenue: dayRevenue,
+      trips: dayTrips,
+    };
+  }).reverse();
+
+  const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042'];
 
   const filteredData = (data: any[]) => {
     if (!searchTerm) return data;
@@ -144,6 +174,14 @@ export const AdminPanel = () => {
       setCounterTimeTemplates(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as CounterTimeTemplate)));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'counterTimeTemplates'));
 
+    const unsubNotifications = onSnapshot(query(collection(db, 'notifications'), orderBy('timestamp', 'desc')), (snapshot) => {
+      setNotifications(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
+    const unsubSecurityLogs = onSnapshot(query(collection(db, 'security_logs'), orderBy('timestamp', 'desc')), (snapshot) => {
+      setSecurityLogs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
     return () => {
       unsubCounters();
       unsubOperators();
@@ -156,10 +194,28 @@ export const AdminPanel = () => {
       unsubTripCounterTimes();
       unsubTripTemplates();
       unsubCounterTimeTemplates();
+      unsubNotifications();
+      unsubSecurityLogs();
     };
   }, [isAdmin]);
 
-  // Recurring Trip Logic: Automatically generate trips for the next 14 days if repeatDaily is true
+  // Audit Log Helper
+  const logAdminAction = async (action: string, collectionName: string, data: any) => {
+    try {
+      await addDoc(collection(db, 'security_logs'), {
+        action,
+        collection: collectionName,
+        data: JSON.parse(JSON.stringify(data)), // Ensure it's serializable
+        user: auth.currentUser?.email || 'Unknown Admin',
+        timestamp: serverTimestamp(),
+        type: 'admin_action'
+      });
+    } catch (err) {
+      console.error('Error logging admin action:', err);
+    }
+  };
+
+  // Recurring Trip Logic: Automatically generate trips for the next 7 days if repeatDaily is true
   useEffect(() => {
     if (!isAdmin || tripTemplates.length === 0) return;
 
@@ -167,8 +223,8 @@ export const AdminPanel = () => {
       const recurringTemplates = tripTemplates.filter(t => t.repeatDaily);
       
       for (const template of recurringTemplates) {
-        // Generate for the next 14 days
-        for (let i = 0; i < 14; i++) {
+        // Generate for the next 7 days
+        for (let i = 0; i < 7; i++) {
           const targetDate = new Date();
           targetDate.setDate(targetDate.getDate() + i);
           
@@ -204,7 +260,7 @@ export const AdminPanel = () => {
                 await addDoc(collection(db, 'tripCounterTimes'), {
                   tripId: newTripRef.id,
                   counterId: ctData.counterId,
-                  arrivalTime: ctData.arrivalTimeOffset.toString(), // We'll store offsets for now or calculate actual times
+                  arrivalTime: ctData.arrivalTimeOffset.toString(),
                   departureTime: ctData.departureTimeOffset.toString(),
                   isReportingCounter: ctData.isReportingCounter
                 });
@@ -224,7 +280,7 @@ export const AdminPanel = () => {
     }, 3000);
 
     return () => clearTimeout(timeoutId);
-  }, [isAdmin, tripTemplates.length, trips.length, counterTimeTemplates.length]);
+  }, [isAdmin, tripTemplates.length, trips.length, counterTimeTemplates.length, deletedTrips.length]);
 
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -320,7 +376,7 @@ export const AdminPanel = () => {
     const boarding = counters.find(c => c.id === booking.boardingStopId);
     const dropping = counters.find(c => c.id === booking.droppingStopId);
 
-    generateTicketPDF(
+    printTicketHTML(
       booking,
       trip,
       route,
@@ -474,10 +530,12 @@ export const AdminPanel = () => {
 
       if (editingItem) {
         await updateDoc(doc(db, collectionName, editingItem.id), data);
+        await logAdminAction('update', collectionName, { id: editingItem.id, ...data });
       } else {
         const id = data.customId || crypto.randomUUID();
         await setDoc(doc(db, collectionName, id), data);
         const docRef = { id };
+        await logAdminAction('create', collectionName, { id, ...data });
         
         // If it's an operator or supervisor, we might want to pre-provision their role
         if (activeTab === 'operators' || (activeTab === 'crew' && data.role === 'supervisor')) {
@@ -601,6 +659,7 @@ export const AdminPanel = () => {
     if (!deleteConfirm) return;
     try {
       await deleteDoc(doc(db, deleteConfirm.collection, deleteConfirm.id));
+      await logAdminAction('delete', deleteConfirm.collection, { id: deleteConfirm.id });
       setDeleteConfirm(null);
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, deleteConfirm.collection);
@@ -610,7 +669,7 @@ export const AdminPanel = () => {
   return (
     <div className="flex flex-col lg:flex-row min-h-screen bg-slate-50/50 -m-4 lg:-m-8">
       {/* Sidebar Navigation */}
-      <div className="lg:w-72 bg-accent text-white flex flex-col h-screen sticky top-0 shadow-2xl z-20">
+      <div className="lg:w-72 glass-hard-dark text-white flex flex-col h-screen sticky top-0 shadow-2xl z-20">
         <div className="p-8 flex items-center gap-3 group cursor-pointer" onClick={() => navigate('/')}>
           <div className="bg-white p-2.5 rounded-xl group-hover:scale-110 transition-transform duration-500">
             <BusIcon className="text-accent" size={24} />
@@ -619,6 +678,10 @@ export const AdminPanel = () => {
             <h1 className="text-xl font-black uppercase tracking-tighter">SwiftLine</h1>
             <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-white/50 leading-none mt-1">Admin Portal</p>
           </div>
+        </div>
+
+        <div className="px-8 mb-6 lg:hidden">
+          <RealTimeClock />
         </div>
 
         <nav className="flex-1 px-4 space-y-1 overflow-y-auto pb-8">
@@ -673,23 +736,72 @@ export const AdminPanel = () => {
         {/* Top Header */}
         <header className="h-20 bg-white border-b border-slate-200 px-8 flex items-center justify-between sticky top-0 z-40">
           <div className="flex-1 max-w-xl">
-            <h2 className="text-2xl font-black text-slate-800">Good Morning!</h2>
+            <h2 className="text-2xl font-black text-slate-800">SwiftLine Admin</h2>
           </div>
-          <div className="flex-1 max-w-xl relative">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-            <input 
-              type="text"
-              placeholder="Search..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-12 pr-4 py-2.5 bg-slate-50 border-none rounded-xl text-sm font-medium focus:ring-2 focus:ring-accent/10 transition-all"
-            />
-          </div>
+          
+          <div className="flex items-center gap-6">
+            <div className="hidden lg:block">
+              <RealTimeClock />
+            </div>
 
-          <div className="flex items-center gap-6 ml-8">
+            {/* Notification Bell */}
+            <div className="relative">
+              <button 
+                onClick={() => setShowNotifications(!showNotifications)}
+                className="p-3 bg-slate-50 rounded-2xl text-slate-600 hover:text-primary transition-all relative"
+              >
+                <Activity size={20} />
+                {notifications.filter(n => !n.read).length > 0 && (
+                  <span className="absolute top-2 right-2 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white animate-pulse" />
+                )}
+              </button>
+
+              <AnimatePresence>
+                {showNotifications && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                    className="absolute right-0 mt-4 w-80 glass-hard rounded-3xl shadow-2xl z-50 overflow-hidden border border-white/50"
+                  >
+                    <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-white/50">
+                      <h4 className="font-black uppercase tracking-tight text-xs">Notifications</h4>
+                      <button 
+                        onClick={async () => {
+                          for (const n of notifications.filter(n => !n.read)) {
+                            await updateDoc(doc(db, 'notifications', n.id), { read: true });
+                          }
+                        }}
+                        className="text-[10px] font-bold text-primary hover:underline"
+                      >
+                        Mark all as read
+                      </button>
+                    </div>
+                    <div className="max-h-96 overflow-y-auto p-2 space-y-1">
+                      {notifications.length === 0 ? (
+                        <div className="p-8 text-center text-slate-400 text-xs font-bold">No notifications</div>
+                      ) : (
+                        notifications.map(n => (
+                          <div key={n.id} className={cn("p-4 rounded-2xl transition-all", n.read ? "opacity-60" : "bg-white/80 shadow-sm border border-white")}>
+                            <div className="flex justify-between items-start mb-1">
+                              <span className="text-[10px] font-black uppercase tracking-widest text-accent">{n.type}</span>
+                              <span className="text-[9px] text-slate-400">{n.timestamp ? format(n.timestamp.toDate(), 'hh:mm a') : 'Just now'}</span>
+                            </div>
+                            <p className="text-xs font-bold text-slate-700 leading-relaxed">{n.message}</p>
+                            <p className="text-[9px] text-slate-400 mt-1 uppercase font-black tracking-tighter">From: {n.senderName || 'System'}</p>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
             <div className="flex items-center gap-3 text-right">
-              <div>
+              <div className="hidden sm:block">
                 <p className="text-sm font-bold text-slate-800 leading-none">{user?.displayName || 'Admin User'}</p>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Super Admin</p>
               </div>
               <img 
                 src={user?.photoURL || `https://ui-avatars.com/api/?name=${user?.displayName || 'Admin'}&background=001F3F&color=fff`} 
@@ -740,21 +852,80 @@ export const AdminPanel = () => {
               {/* Stats Grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 {[
-                  { label: 'Total Revenue', value: `৳ ${bookings.filter(b => b.status === 'confirmed').reduce((acc, b) => acc + (b.totalFare || 0), 0).toLocaleString()}`, icon: TrendingUp, color: 'bg-accent' },
-                  { label: 'Active Trips', value: trips.filter(t => t.status === 'departed').length, icon: Activity, color: 'bg-emerald-600' },
-                  { label: 'Total Buses', value: buses.length, icon: BusIcon, color: 'bg-teal-600' },
-                  { label: 'Total Passengers', value: passengers.length, icon: Users, color: 'bg-green-600' },
+                  { label: 'Total Revenue', value: `৳ ${bookings.filter(b => b.status === 'confirmed').reduce((acc, b) => acc + (b.totalFare || 0), 0).toLocaleString()}`, icon: TrendingUp, color: 'text-accent', bg: 'glass-hard' },
+                  { label: 'Active Trips', value: trips.filter(t => t.status === 'departed').length, icon: Activity, color: 'text-emerald-600', bg: 'glass-hard' },
+                  { label: 'Total Buses', value: buses.length, icon: BusIcon, color: 'text-teal-600', bg: 'glass-hard' },
+                  { label: 'Total Passengers', value: passengers.length, icon: Users, color: 'text-green-600', bg: 'glass-hard' },
                 ].map((stat, i) => (
-                  <div key={i} className={`${stat.color} p-6 rounded-3xl text-white shadow-lg`}>
+                  <div key={i} className={`${stat.bg} p-6 rounded-[32px] shadow-sm border border-white/50 relative overflow-hidden group hover:scale-[1.02] transition-all`}>
+                    <div className="absolute -right-4 -bottom-4 opacity-5 group-hover:opacity-10 transition-opacity">
+                      <stat.icon size={120} />
+                    </div>
                     <div className="flex items-center justify-between mb-4">
-                      <div className="p-3 bg-white/20 rounded-2xl">
-                        <stat.icon size={24} className="text-white" />
+                      <div className={cn("p-3 rounded-2xl bg-slate-50", stat.color)}>
+                        <stat.icon size={24} />
                       </div>
                     </div>
-                    <p className="text-sm font-bold text-white/80 mb-1">{stat.label}</p>
-                    <h3 className="text-2xl font-black text-white tracking-tight">{stat.value}</h3>
+                    <p className="text-xs font-black uppercase tracking-widest text-slate-400 mb-1">{stat.label}</p>
+                    <h3 className="text-3xl font-black text-slate-800 tracking-tighter">{stat.value}</h3>
                   </div>
                 ))}
+              </div>
+
+              {/* Charts Section */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <div className="glass-hard p-8 rounded-[32px] border border-white/50 shadow-sm">
+                  <div className="flex items-center justify-between mb-8">
+                    <h3 className="text-lg font-black uppercase tracking-tight text-slate-800">Revenue Overview</h3>
+                    <div className="flex items-center gap-2 px-3 py-1 bg-emerald-50 text-emerald-600 rounded-full text-[10px] font-black uppercase tracking-widest">
+                      <TrendingUp size={12} />
+                      Last 7 Days
+                    </div>
+                  </div>
+                  <div className="h-80 w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={chartData}>
+                        <defs>
+                          <linearGradient id="colorRev" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#F27D26" stopOpacity={0.3}/>
+                            <stop offset="95%" stopColor="#F27D26" stopOpacity={0}/>
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 700, fill: '#94a3b8'}} dy={10} />
+                        <YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 700, fill: '#94a3b8'}} />
+                        <Tooltip 
+                          contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontWeight: 800, fontSize: '12px'}}
+                        />
+                        <Area type="monotone" dataKey="revenue" stroke="#F27D26" strokeWidth={3} fillOpacity={1} fill="url(#colorRev)" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                <div className="glass-hard p-8 rounded-[32px] border border-white/50 shadow-sm">
+                  <div className="flex items-center justify-between mb-8">
+                    <h3 className="text-lg font-black uppercase tracking-tight text-slate-800">Trip Volume</h3>
+                    <div className="flex items-center gap-2 px-3 py-1 bg-blue-50 text-blue-600 rounded-full text-[10px] font-black uppercase tracking-widest">
+                      <BusIcon size={12} />
+                      Weekly Stats
+                    </div>
+                  </div>
+                  <div className="h-80 w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={chartData}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 700, fill: '#94a3b8'}} dy={10} />
+                        <YAxis axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 700, fill: '#94a3b8'}} />
+                        <Tooltip 
+                          cursor={{fill: '#f8fafc'}}
+                          contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', fontWeight: 800, fontSize: '12px'}}
+                        />
+                        <Bar dataKey="trips" fill="#28a745" radius={[6, 6, 0, 0]} barSize={30} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
               </div>
 
               {/* Recent Activity & Quick Actions */}
@@ -1018,7 +1189,7 @@ export const AdminPanel = () => {
                               className="p-2 text-orange-600 hover:bg-orange-50 rounded-lg transition-colors"
                               title="Delete All Recurring Trips"
                             >
-                              <History size={18} />
+                              <HistoryIcon size={18} />
                             </button>
                           )}
                         </td>
@@ -1321,53 +1492,169 @@ export const AdminPanel = () => {
           )}
 
           {activeTab === 'security' && (
-            <div className="max-w-md mx-auto bg-white p-8 rounded-2xl shadow-sm border border-slate-100">
-              <h3 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2">
-                <ShieldCheck className="text-emerald-500" />
-                Change Password
-              </h3>
-              
-              <form onSubmit={handlePasswordChange} className="space-y-4">
-                {passwordError && (
-                  <div className="p-3 bg-red-50 text-red-600 rounded-xl text-sm font-medium">
-                    {passwordError}
+            <div className="space-y-8">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                {/* Security Settings */}
+                <div className="lg:col-span-1 space-y-6">
+                  <div className="glass-hard p-8 rounded-[32px] border border-white/50 shadow-sm">
+                    <h3 className="text-xl font-black uppercase tracking-tight text-slate-800 mb-6 flex items-center gap-2">
+                      <ShieldCheck className="text-accent" />
+                      Security Controls
+                    </h3>
+                    <div className="space-y-6">
+                      <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl">
+                        <div>
+                          <p className="text-sm font-black uppercase tracking-tight text-slate-700">IP Whitelisting</p>
+                          <p className="text-[10px] font-bold text-slate-400">Restrict access to specific IPs</p>
+                        </div>
+                        <button 
+                          onClick={() => setSecuritySettings(prev => ({ ...prev, ipWhitelisting: !prev.ipWhitelisting }))}
+                          className={cn("w-12 h-6 rounded-full transition-all relative", securitySettings.ipWhitelisting ? "bg-accent" : "bg-slate-300")}
+                        >
+                          <div className={cn("absolute top-1 w-4 h-4 bg-white rounded-full transition-all", securitySettings.ipWhitelisting ? "left-7" : "left-1")} />
+                        </button>
+                      </div>
+
+                      <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl">
+                        <div>
+                          <p className="text-sm font-black uppercase tracking-tight text-slate-700">Two-Factor Auth</p>
+                          <p className="text-[10px] font-bold text-slate-400">Require 2FA for staff logins</p>
+                        </div>
+                        <button 
+                          onClick={() => setSecuritySettings(prev => ({ ...prev, twoFactorAuth: !prev.twoFactorAuth }))}
+                          className={cn("w-12 h-6 rounded-full transition-all relative", securitySettings.twoFactorAuth ? "bg-accent" : "bg-slate-300")}
+                        >
+                          <div className={cn("absolute top-1 w-4 h-4 bg-white rounded-full transition-all", securitySettings.twoFactorAuth ? "left-7" : "left-1")} />
+                        </button>
+                      </div>
+
+                      <div className="p-4 bg-slate-50 rounded-2xl space-y-3">
+                        <p className="text-sm font-black uppercase tracking-tight text-slate-700">Allowed IP Addresses</p>
+                        <div className="flex flex-wrap gap-2">
+                          {securitySettings.allowedIPs.map(ip => (
+                            <span key={ip} className="px-3 py-1 bg-white border border-slate-200 rounded-lg text-[10px] font-bold text-slate-600 flex items-center gap-2">
+                              {ip}
+                              <button onClick={() => setSecuritySettings(prev => ({ ...prev, allowedIPs: prev.allowedIPs.filter(i => i !== ip) }))} className="text-red-400 hover:text-red-600">×</button>
+                            </span>
+                          ))}
+                          <button className="px-3 py-1 bg-accent/10 border border-accent/20 rounded-lg text-[10px] font-bold text-accent">+ Add IP</button>
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                )}
-                {passwordSuccess && (
-                  <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl text-sm font-medium">
-                    {passwordSuccess}
+
+                  <div className="glass-hard p-8 rounded-[32px] border border-white/50 shadow-sm bg-red-50/30">
+                    <h3 className="text-lg font-black uppercase tracking-tight text-red-600 mb-4 flex items-center gap-2">
+                      <AlertCircle size={20} />
+                      Danger Zone
+                    </h3>
+                    <button className="w-full p-4 bg-white border border-red-100 text-red-600 rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-red-50 transition-all">
+                      Revoke All Sessions
+                    </button>
                   </div>
-                )}
-                
-                <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-1">New Password</label>
-                  <input 
-                    type="password" 
-                    required
-                    value={newPassword}
-                    onChange={e => setNewPassword(e.target.value)}
-                    className="w-full p-3 rounded-xl border border-slate-200 focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
-                  />
                 </div>
-                
-                <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-1">Confirm Password</label>
-                  <input 
-                    type="password" 
-                    required
-                    value={confirmPassword}
-                    onChange={e => setConfirmPassword(e.target.value)}
-                    className="w-full p-3 rounded-xl border border-slate-200 focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
-                  />
+
+                {/* Audit Logs */}
+                <div className="lg:col-span-2 glass-hard p-8 rounded-[32px] border border-white/50 shadow-sm">
+                  <div className="flex items-center justify-between mb-8">
+                    <h3 className="text-xl font-black uppercase tracking-tight text-slate-800 flex items-center gap-2">
+                      <HistoryIcon className="text-accent" />
+                      Security Audit Logs
+                    </h3>
+                    <button className="text-xs font-bold text-primary hover:underline">Download CSV</button>
+                  </div>
+                  <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2">
+                    {securityLogs.length === 0 ? (
+                      <div className="py-20 text-center space-y-4">
+                        <div className="inline-flex bg-slate-50 p-6 rounded-full text-slate-200">
+                          <ShieldCheck size={48} />
+                        </div>
+                        <p className="text-slate-400 font-bold">No security events recorded</p>
+                      </div>
+                    ) : (
+                      securityLogs.map((log, i) => (
+                        <div key={i} className="p-4 bg-white/50 rounded-2xl border border-slate-100 flex items-center justify-between group hover:bg-white transition-all">
+                          <div className="flex items-center gap-4">
+                            <div className={cn(
+                              "p-3 rounded-xl",
+                              log.type === 'login' ? "bg-emerald-50 text-emerald-600" : 
+                              log.type === 'failed_login' ? "bg-red-50 text-red-600" : "bg-blue-50 text-blue-600"
+                            )}>
+                              {log.type === 'login' ? <UserCheck size={18} /> : <Shield size={18} />}
+                            </div>
+                            <div>
+                              <p className="text-sm font-black text-slate-800">{log.action || log.message}</p>
+                              <div className="flex items-center gap-3 mt-1">
+                                <span className="text-[10px] font-bold text-slate-400 flex items-center gap-1">
+                                  <User size={10} /> {log.userEmail || 'Unknown'}
+                                </span>
+                                <span className="text-[10px] font-bold text-slate-400 flex items-center gap-1">
+                                  <Globe size={10} /> {log.ip || '0.0.0.0'}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                              {log.timestamp ? format(log.timestamp.toDate(), 'MMM dd, HH:mm') : 'Recently'}
+                            </p>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
                 </div>
+              </div>
+
+              {/* Password Change Section */}
+              <div className="max-w-md mx-auto bg-white p-8 rounded-2xl shadow-sm border border-slate-100">
+                <h3 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2">
+                  <ShieldCheck className="text-emerald-500" />
+                  Change Password
+                </h3>
                 
-                <button 
-                  type="submit"
-                  className="w-full py-3 bg-accent text-white rounded-xl font-bold hover:bg-accent/90 transition-colors shadow-lg shadow-accent/20"
-                >
-                  Update Password
-                </button>
-              </form>
+                <form onSubmit={handlePasswordChange} className="space-y-4">
+                  {passwordError && (
+                    <div className="p-3 bg-red-50 text-red-600 rounded-xl text-sm font-medium">
+                      {passwordError}
+                    </div>
+                  )}
+                  {passwordSuccess && (
+                    <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl text-sm font-medium">
+                      {passwordSuccess}
+                    </div>
+                  )}
+                  
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-1">New Password</label>
+                    <input 
+                      type="password" 
+                      required
+                      value={newPassword}
+                      onChange={e => setNewPassword(e.target.value)}
+                      className="w-full p-3 rounded-xl border border-slate-200 focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-bold text-slate-700 mb-1">Confirm Password</label>
+                    <input 
+                      type="password" 
+                      required
+                      value={confirmPassword}
+                      onChange={e => setConfirmPassword(e.target.value)}
+                      className="w-full p-3 rounded-xl border border-slate-200 focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
+                    />
+                  </div>
+                  
+                  <button 
+                    type="submit"
+                    className="w-full py-3 bg-accent text-white rounded-xl font-bold hover:bg-accent/90 transition-colors shadow-lg shadow-accent/20"
+                  >
+                    Update Password
+                  </button>
+                </form>
+              </div>
             </div>
           )}
 
@@ -2137,10 +2424,6 @@ export const AdminPanel = () => {
                           >
                             <Printer size={16} />
                           </button>
-                          {/* Hidden QR Code for PDF generation */}
-                          <div className="hidden">
-                            <QRCodeCanvas id={`ticket-qrcode-${booking.id}`} value={booking.id} size={200} level="H" includeMargin />
-                          </div>
                         </div>
                       );
                     })}

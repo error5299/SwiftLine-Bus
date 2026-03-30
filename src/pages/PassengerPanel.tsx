@@ -16,7 +16,7 @@ import { format, addDays, isSameDay, parseISO } from 'date-fns';
 import { formatInTimeZone } from 'date-fns-tz';
 import { safeFormat, safeGetTime } from '../utils/dateUtils';
 import { QRCodeSVG, QRCodeCanvas } from 'qrcode.react';
-import { generateTicketPDF } from '../utils/ticketGenerator';
+import { generateTicketPDF, printTicketHTML } from '../utils/ticketGenerator';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface PassengerPanelProps {
@@ -368,6 +368,26 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
     );
   };
 
+  const printETicket = () => {
+    if (!bookingSuccess) return;
+    const trip = trips.find(t => t.id === bookingSuccess.tripId);
+    const route = routes.find(r => r.id === trip?.routeId);
+    const boarding = counters.find(c => c.id === bookingSuccess.boardingStopId);
+    const dropping = counters.find(c => c.id === bookingSuccess.droppingStopId);
+    const bus = buses.find(b => b.id === trip?.busId);
+
+    printTicketHTML(
+      bookingSuccess,
+      trip,
+      route,
+      boarding,
+      dropping,
+      bus,
+      passengerData,
+      'ticket-qrcode'
+    );
+  };
+
   const handleCoachTrack = () => {
     const trip = trips.find(t => t.coachNumber?.toLowerCase() === trackCoachNumber.toLowerCase());
     if (trip) {
@@ -531,7 +551,7 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
           </motion.div>
 
           {/* Search Box */}
-          <div className="bg-white p-4 md:p-8 rounded-[2.5rem] shadow-2xl grid grid-cols-1 md:grid-cols-7 gap-6 items-end relative mt-12">
+          <div className="glass-hard p-4 md:p-8 rounded-[2.5rem] shadow-2xl grid grid-cols-1 md:grid-cols-7 gap-6 items-end relative mt-12 border-none">
             <div className="md:col-span-2 text-left relative">
               <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-4">From</label>
               <div className="relative group">
@@ -1551,7 +1571,7 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                         <span>Track Bus</span>
                       </button>
                       <button 
-                        onClick={() => window.print()} 
+                        onClick={printETicket} 
                         className="py-4 bg-white border-2 border-slate-100 rounded-2xl font-black text-primary hover:border-emerald-500 hover:text-emerald-500 transition-all flex items-center justify-center gap-2"
                       >
                         <Printer size={20} />

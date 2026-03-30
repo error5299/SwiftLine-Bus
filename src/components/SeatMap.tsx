@@ -147,7 +147,7 @@ export const SeatMap: React.FC<SeatMapProps> = ({
   };
 
   return (
-    <div className="p-6 bg-slate-50 rounded-2xl border border-slate-200 w-full mx-auto overflow-x-auto">
+    <div className="pt-32 p-6 bg-slate-50 rounded-2xl border border-slate-200 w-full mx-auto overflow-visible">
       <div className="flex justify-between items-center mb-8 px-2 min-w-[200px]">
         <div className="w-12 h-12 border-2 border-dashed border-slate-300 rounded-lg flex items-center justify-center text-[10px] font-bold text-slate-400 uppercase">
           {t('দরজা', 'Door')}
