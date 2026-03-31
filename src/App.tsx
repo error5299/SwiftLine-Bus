@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { auth, db, handleFirestoreError, OperationType } from './firebase';
 import { onAuthStateChanged } from 'firebase/auth';
-import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, query, collection, where, getDocs } from 'firebase/firestore';
 import { useLanguage } from './hooks/useLanguage';
 import { Header } from './components/Header';
 import { Footer } from './components/Footer';
@@ -50,7 +50,28 @@ export default function App() {
             console.log("User doc exists:", userDoc.data());
             setRole(userDoc.data().role);
           } else if (currentUser.email) {
-            console.log("User doc does not exist, checking staff_emails for:", currentUser.email);
+            console.log("User doc does not exist, checking staff_emails or staff_credentials for:", currentUser.email);
+            
+            // Handle generated staff emails
+            if (currentUser.email.endsWith('@swiftline.staff')) {
+              const customId = currentUser.email.split('@')[0];
+              const q = query(collection(db, 'staff_credentials'), where('id', '==', customId));
+              const snapshot = await getDocs(q);
+              if (!snapshot.empty) {
+                const staffData = snapshot.docs[0].data();
+                setRole(staffData.role);
+                // Save to users collection for future fast access
+                await setDoc(doc(db, 'users', currentUser.uid), {
+                  email: currentUser.email,
+                  role: staffData.role,
+                  customId: customId,
+                  profileId: snapshot.docs[0].id,
+                  createdAt: new Date().toISOString()
+                });
+                return;
+              }
+            }
+
             // Check staff_emails collection by email
             const staffDoc = await getDoc(doc(db, 'staff_emails', currentUser.email));
             if (staffDoc.exists()) {
@@ -58,11 +79,11 @@ export default function App() {
               const staffData = staffDoc.data();
               setRole(staffData.role);
               // Also save to users collection for future fast access
-              const { setDoc } = await import('firebase/firestore');
               await setDoc(doc(db, 'users', currentUser.uid), {
                 email: currentUser.email,
                 role: staffData.role,
-                profileId: staffData.profileId
+                profileId: staffData.profileId,
+                createdAt: new Date().toISOString()
               });
             } else if (currentUser.email === 'staff@swiftline.com') {
               // Handle custom ID login
@@ -73,7 +94,15 @@ export default function App() {
                 const q = query(collection(db, 'staff_credentials'), where('id', '==', customStaffId));
                 const snapshot = await getDocs(q);
                 if (!snapshot.empty) {
-                  setRole(snapshot.docs[0].data().role);
+                  const staffData = snapshot.docs[0].data();
+                  setRole(staffData.role);
+                  await setDoc(doc(db, 'users', currentUser.uid), {
+                    email: currentUser.email,
+                    role: staffData.role,
+                    customId: customStaffId,
+                    profileId: snapshot.docs[0].id,
+                    createdAt: new Date().toISOString()
+                  });
                 }
               }
             } else {
@@ -108,24 +137,17 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const loginPaths = ['/login', '/operator-login', '/staff-login'];
+    const loginPaths = ['/login'];
     if (user && role && loginPaths.includes(location.pathname)) {
       if (role === 'admin') navigate('/admin-portal');
       else if (role === 'operator') navigate('/operator-panel');
       else if (role === 'supervisor') navigate('/supervisor-panel');
+      else if (role === 'driver') navigate('/driver-panel');
       else navigate('/');
     }
   }, [user, role, location.pathname, navigate]);
 
   if (loading) return <div className="h-screen flex items-center justify-center bg-bg-off font-bold text-primary animate-pulse">SwiftLine Loading...</div>;
-
-  const ProtectedRoute = ({ children, allowedRoles }: { children: React.ReactNode, allowedRoles: string[] }) => {
-    if (!user) return <Navigate to="/login" replace />;
-    if (allowedRoles.length > 0 && role && !allowedRoles.includes(role)) {
-      return <Navigate to="/" replace />;
-    }
-    return <>{children}</>;
-  };
 
   const isFullScreenRoute = ['/admin-portal', '/operator-panel', '/', '/track-bus', '/driver-panel', '/supervisor-panel'].includes(location.pathname);
 
@@ -142,34 +164,16 @@ export default function App() {
               <Route path="/contact" element={<Contact />} />
               <Route path="/track-ticket" element={<TrackTicket />} />
               <Route path="/track-bus" element={<PassengerPanel initialTracking={true} />} />
-              <Route path="/profile" element={<ProtectedRoute allowedRoles={[]}><Profile /></ProtectedRoute>} />
+              <Route path="/profile" element={<Profile />} />
               <Route path="/login" element={<Login onSuccess={() => {}} />} />
               
               {/* Hidden Management Routes */}
-              <Route path="/admin-portal" element={
-                <ProtectedRoute allowedRoles={['admin']}>
-                  <AdminPanel />
-                </ProtectedRoute>
-              } />
-              <Route path="/operator-login" element={<Login onSuccess={() => {}} defaultRole="operator" />} />
-              <Route path="/staff-login" element={<Login onSuccess={() => {}} defaultRole="supervisor" />} />
+              <Route path="/admin-portal" element={<AdminPanel />} />
               
-              {/* Role-based redirects for the panels */}
-              <Route path="/operator-panel" element={
-                <ProtectedRoute allowedRoles={['operator', 'admin']}>
-                  <OperatorPanel />
-                </ProtectedRoute>
-              } />
-              <Route path="/supervisor-panel" element={
-                <ProtectedRoute allowedRoles={['supervisor', 'admin']}>
-                  <SupervisorPanel />
-                </ProtectedRoute>
-              } />
-              <Route path="/driver-panel" element={
-                <ProtectedRoute allowedRoles={['driver', 'admin']}>
-                  <DriverPanel />
-                </ProtectedRoute>
-              } />
+              {/* Role-based panels */}
+              <Route path="/operator-panel" element={<OperatorPanel />} />
+              <Route path="/supervisor-panel" element={<SupervisorPanel />} />
+              <Route path="/driver-panel" element={<DriverPanel />} />
 
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

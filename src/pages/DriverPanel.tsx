@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { db, handleFirestoreError, OperationType } from '../firebase';
-import { collection, onSnapshot, query, where, getDocs, updateDoc, doc } from 'firebase/firestore';
+import { auth, db, handleFirestoreError, OperationType } from '../firebase';
+import { collection, onSnapshot, query, where, getDocs, updateDoc, doc, getDoc, setDoc } from 'firebase/firestore';
+import { onAuthStateChanged } from 'firebase/auth';
 import { Trip, Crew, Route, Counter, Booking, Passenger } from '../types';
 import { Clock, Navigation, Bus as BusIcon, LogOut, Activity, History as HistoryIcon, Calendar, ChevronRight, ShieldAlert, AlertTriangle, MessageSquare, CheckCircle2, Users, MapPin, Search, QrCode } from 'lucide-react';
 import { format } from 'date-fns';
@@ -23,18 +24,57 @@ export const DriverPanel: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'live' | 'history'>('live');
   const [filterDate, setFilterDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [searchQuery, setSearchQuery] = useState('');
+  const [isAuthReady, setIsAuthReady] = useState(false);
   const [droppingRemarks, setDroppingRemarks] = useState<{[key: string]: string}>({});
 
   useEffect(() => {
-    const savedDriver = localStorage.getItem('driver_session');
-    if (savedDriver) {
-      const driverData = JSON.parse(savedDriver);
-      setUser(driverData);
-      setDriverProfile(driverData);
-    }
-  }, []);
+    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
+      if (currentUser) {
+        setUser(currentUser);
+        let profileId = null;
+        let role = null;
+        
+        const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+        if (userDoc.exists()) {
+          const userData = userDoc.data();
+          profileId = userData.profileId;
+          role = userData.role;
+        } else if (currentUser.email) {
+          const staffEmailDoc = await getDoc(doc(db, 'staff_emails', currentUser.email));
+          if (staffEmailDoc.exists()) {
+            const staffEmailData = staffEmailDoc.data();
+            profileId = staffEmailData.profileId;
+            role = staffEmailData.role;
+            
+            await setDoc(doc(db, 'users', currentUser.uid), {
+              email: currentUser.email,
+              role: role,
+              profileId: profileId,
+              createdAt: new Date().toISOString()
+            });
+          }
+        }
 
-  useEffect(() => {
+        if (profileId && (role === 'driver' || role === 'admin')) {
+          const driverDoc = await getDoc(doc(db, 'crew', profileId));
+          if (driverDoc.exists()) {
+            setDriverProfile({ id: driverDoc.id, ...driverDoc.data() } as Crew);
+          }
+        }
+      } else {
+        const savedDriver = localStorage.getItem('driver_session');
+        if (savedDriver) {
+          const driverData = JSON.parse(savedDriver);
+          setUser(driverData);
+          setDriverProfile(driverData);
+        } else {
+          setUser(null);
+          setDriverProfile(null);
+        }
+      }
+      setIsAuthReady(true);
+    });
+
     const unsubTrips = onSnapshot(collection(db, 'trips'), (snapshot) => {
       setTrips(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Trip)));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'trips'));
@@ -52,6 +92,7 @@ export const DriverPanel: React.FC = () => {
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'passengers'));
 
     return () => {
+      unsubscribeAuth();
       unsubTrips();
       unsubRoutes();
       unsubCounters();
@@ -104,16 +145,55 @@ export const DriverPanel: React.FC = () => {
   const handleCustomLogin = async (id: string, pass: string) => {
     setLoginError(null);
     try {
-      const q = query(collection(db, 'crew'), where('customId', '==', id), where('password', '==', pass), where('role', '==', 'driver'));
-      const snap = await getDocs(q);
+      const { signInWithEmailAndPassword, createUserWithEmailAndPassword } = await import('firebase/auth');
+      const { auth } = await import('../firebase');
       
-      if (!snap.empty) {
-        const driverData = { id: snap.docs[0].id, ...snap.docs[0].data() } as Crew;
-        setUser(driverData);
-        setDriverProfile(driverData);
-        localStorage.setItem('driver_session', JSON.stringify(driverData));
-      } else {
+      // First verify in Firestore
+      const q = query(collection(db, 'staff_credentials'), where('id', '==', id));
+      const snapshot = await getDocs(q);
+      
+      if (snapshot.empty || snapshot.docs[0].data().password !== pass) {
         setLoginError('Invalid ID or Password.');
+        return;
+      }
+      
+      const staffData = snapshot.docs[0].data();
+      if (staffData.role !== 'driver') {
+        setLoginError(`This ID is authorized as ${staffData.role}, not driver.`);
+        return;
+      }
+
+      const staffEmail = staffData.email || `${id}@swiftline.staff`;
+      
+      // Try to sign in with Firebase Auth
+      try {
+        const userCredential = await signInWithEmailAndPassword(auth, staffEmail, pass);
+        await setDoc(doc(db, 'users', userCredential.user.uid), {
+          email: staffEmail,
+          role: 'driver',
+          profileId: snapshot.docs[0].id,
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+      } catch (authErr: any) {
+        if (authErr.code === 'auth/user-not-found' || authErr.code === 'auth/invalid-credential' || authErr.code === 'auth/invalid-email') {
+          try {
+            const userCredential = await createUserWithEmailAndPassword(auth, staffEmail, pass);
+            await setDoc(doc(db, 'users', userCredential.user.uid), {
+              email: staffEmail,
+              role: 'driver',
+              profileId: snapshot.docs[0].id,
+              createdAt: new Date().toISOString()
+            });
+          } catch (createErr: any) {
+            if (createErr.code === 'auth/email-already-in-use') {
+              setLoginError('Invalid ID or Password.');
+            } else {
+              setLoginError(createErr.message);
+            }
+          }
+        } else {
+          setLoginError(authErr.message);
+        }
       }
     } catch (err) {
       setLoginError('Error during login.');
@@ -188,13 +268,15 @@ export const DriverPanel: React.FC = () => {
     }
   };
 
+  if (!isAuthReady) return null;
+
   if (!user || !driverProfile) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-        <div className="w-full max-w-md">
-          <Login onLogin={handleCustomLogin} error={loginError} title="Driver Panel" />
-        </div>
-      </div>
+      <Login 
+        title="Driver Login" 
+        onLogin={handleCustomLogin} 
+        error={loginError} 
+      />
     );
   }
 

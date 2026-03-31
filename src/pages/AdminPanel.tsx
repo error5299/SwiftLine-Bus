@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
-import { collection, onSnapshot, addDoc, updateDoc, doc, deleteDoc, query, orderBy, setDoc, serverTimestamp, where, getDocs } from 'firebase/firestore';
+import { collection, onSnapshot, addDoc, updateDoc, doc, deleteDoc, query, orderBy, setDoc, serverTimestamp, where, getDocs, getDoc } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
-import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
+import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged } from 'firebase/auth';
 import { Counter, Operator, Route, Bus, Crew, Passenger, WalletTransaction, Trip, RouteStop, TripCounterTime, Booking, TripTemplate, CounterTimeTemplate } from '../types';
 import { useLanguage } from '../hooks/useLanguage';
 import { Plus, Edit2, Trash2, Wallet, Map, Bus as BusIcon, Users, UserCheck, ShieldCheck, Search, X, LogIn, Navigation, LayoutDashboard, TrendingUp, Activity, Clock, LogOut, Globe, Printer, Map as MapIcon, Star, Filter, ChevronRight, Wifi, Coffee, Zap, Info, MapPin, History as HistoryIcon, AlertCircle, Shield, User } from 'lucide-react';
@@ -106,13 +106,44 @@ export const AdminPanel = () => {
   }, [editingItem, activeTab]);
 
   useEffect(() => {
-    const savedAdmin = localStorage.getItem('admin_session');
-    if (savedAdmin) {
-      const adminData = JSON.parse(savedAdmin);
-      setUser(adminData);
-      setIsAdmin(true);
-    }
-    setIsAuthReady(true);
+    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
+      if (currentUser) {
+        setUser(currentUser);
+        let role = null;
+        
+        const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+        if (userDoc.exists()) {
+          role = userDoc.data().role;
+        } else if (currentUser.email) {
+          const staffEmailDoc = await getDoc(doc(db, 'staff_emails', currentUser.email));
+          if (staffEmailDoc.exists()) {
+            role = staffEmailDoc.data().role;
+            await setDoc(doc(db, 'users', currentUser.uid), {
+              email: currentUser.email,
+              role: role,
+              createdAt: new Date().toISOString()
+            });
+          }
+        }
+
+        if (role === 'admin') {
+          setIsAdmin(true);
+        }
+      } else {
+        const savedAdmin = localStorage.getItem('admin_session');
+        if (savedAdmin) {
+          const adminData = JSON.parse(savedAdmin);
+          setUser(adminData);
+          setIsAdmin(true);
+        } else {
+          setUser(null);
+          setIsAdmin(false);
+        }
+      }
+      setIsAuthReady(true);
+    });
+
+    return () => unsubscribeAuth();
   }, []);
 
   const [deletedTrips, setDeletedTrips] = useState<{ coachNumber: string, baseDepartureTime: string }[]>([]);
@@ -324,26 +355,65 @@ export const AdminPanel = () => {
   const handleCustomLogin = async (id: string, pass: string) => {
     setLoginError(null);
     try {
+      const { signInWithEmailAndPassword, createUserWithEmailAndPassword } = await import('firebase/auth');
+      
+      // First verify in Firestore
       const q = query(collection(db, 'admins'), where('customId', '==', id), where('password', '==', pass));
       const snap = await getDocs(q);
       
+      let adminData: any = null;
       if (!snap.empty) {
-        const adminData = { id: snap.docs[0].id, ...snap.docs[0].data() };
-        setUser(adminData);
-        setIsAdmin(true);
-        localStorage.setItem('admin_session', JSON.stringify(adminData));
+        adminData = { id: snap.docs[0].id, ...snap.docs[0].data() };
       } else {
         const allAdmins = await getDocs(collection(db, 'admins'));
         if (allAdmins.empty && id === 'admin' && pass === 'admin') {
           const newAdmin = { customId: 'admin', password: 'admin', name: 'Super Admin', role: 'admin' };
           const docRef = await addDoc(collection(db, 'admins'), newAdmin);
-          const adminData = { id: docRef.id, ...newAdmin };
+          adminData = { id: docRef.id, ...newAdmin };
+        }
+      }
+
+      if (adminData) {
+        const adminEmail = adminData.email || `${id}@swiftline.admin`;
+        
+        // Try to sign in with Firebase Auth
+        try {
+          const userCredential = await signInWithEmailAndPassword(auth, adminEmail, pass);
+          await setDoc(doc(db, 'users', userCredential.user.uid), {
+            email: adminEmail,
+            role: 'admin',
+            profileId: adminData.id,
+            updatedAt: new Date().toISOString()
+          }, { merge: true });
           setUser(adminData);
           setIsAdmin(true);
           localStorage.setItem('admin_session', JSON.stringify(adminData));
-        } else {
-          setLoginError('Invalid ID or Password.');
+        } catch (authErr: any) {
+          if (authErr.code === 'auth/user-not-found' || authErr.code === 'auth/invalid-credential' || authErr.code === 'auth/invalid-email') {
+            try {
+              const userCredential = await createUserWithEmailAndPassword(auth, adminEmail, pass);
+              await setDoc(doc(db, 'users', userCredential.user.uid), {
+                email: adminEmail,
+                role: 'admin',
+                profileId: adminData.id,
+                createdAt: new Date().toISOString()
+              });
+              setUser(adminData);
+              setIsAdmin(true);
+              localStorage.setItem('admin_session', JSON.stringify(adminData));
+            } catch (createErr: any) {
+              if (createErr.code === 'auth/email-already-in-use') {
+                setLoginError('Invalid ID or Password.');
+              } else {
+                setLoginError(createErr.message);
+              }
+            }
+          } else {
+            setLoginError(authErr.message);
+          }
         }
+      } else {
+        setLoginError('Invalid ID or Password.');
       }
     } catch (err) {
       setLoginError('Error during login.');
@@ -401,6 +471,19 @@ export const AdminPanel = () => {
   const handleAddData = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
+
+    // Check for duplicate Custom ID for operators and crew
+    if (activeTab === 'operators' || activeTab === 'crew') {
+      const customId = formData.get('customId') as string;
+      const q = query(collection(db, 'staff_credentials'), where('id', '==', customId));
+      const snapshot = await getDocs(q);
+      
+      const isDuplicate = snapshot.docs.some(doc => doc.id !== editingItem?.id);
+      if (isDuplicate) {
+        alert('This Custom ID is already in use. Please use a unique ID.');
+        return;
+      }
+    }
     let data: any = {};
     let collectionName = activeTab;
 
@@ -531,29 +614,43 @@ export const AdminPanel = () => {
       if (editingItem) {
         await updateDoc(doc(db, collectionName, editingItem.id), data);
         await logAdminAction('update', collectionName, { id: editingItem.id, ...data });
+        
+        // Update staff credentials and emails if it's a staff member
+        if (activeTab === 'operators' || activeTab === 'crew') {
+          await setDoc(doc(db, 'staff_emails', data.email), {
+            role: activeTab === 'operators' ? 'operator' : data.role,
+            profileId: editingItem.id
+          });
+          
+          await setDoc(doc(db, 'staff_credentials', editingItem.id), {
+            id: data.customId,
+            password: data.password,
+            email: data.email,
+            role: activeTab === 'operators' ? 'operator' : data.role
+          });
+        }
       } else {
         const id = data.customId || crypto.randomUUID();
         await setDoc(doc(db, collectionName, id), data);
         const docRef = { id };
         await logAdminAction('create', collectionName, { id, ...data });
         
-        // If it's an operator or supervisor, we might want to pre-provision their role
-        if (activeTab === 'operators' || (activeTab === 'crew' && data.role === 'supervisor')) {
+        // If it's an operator, supervisor, or driver, we might want to pre-provision their role
+        if (activeTab === 'operators' || activeTab === 'crew') {
           // We can't set the 'users' doc yet because we don't have their UID
           // But we can store the email mapping
           await setDoc(doc(db, 'staff_emails', data.email), {
-            role: activeTab === 'operators' ? 'operator' : 'supervisor',
+            role: activeTab === 'operators' ? 'operator' : data.role,
             profileId: docRef.id
           });
           
           // Save credentials for custom ID login
-          if (activeTab === 'operators' || (activeTab === 'crew' && data.role === 'supervisor')) {
-            await setDoc(doc(db, 'staff_credentials', docRef.id), {
-              id: data.customId,
-              password: data.password,
-              role: activeTab === 'operators' ? 'operator' : 'supervisor'
-            });
-          }
+          await setDoc(doc(db, 'staff_credentials', docRef.id), {
+            id: data.customId,
+            password: data.password,
+            email: data.email,
+            role: activeTab === 'operators' ? 'operator' : data.role
+          });
         }
       }
       setShowModal(false);
@@ -1417,7 +1514,17 @@ export const AdminPanel = () => {
           )}
 
           {activeTab === 'operators' && (
-            <div className="overflow-x-auto">
+            <div className="space-y-6">
+              <div className="p-4 bg-primary/5 border border-primary/10 rounded-2xl flex items-center gap-4">
+                <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center text-primary">
+                  <LogIn size={20} />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-slate-800">Operator Login URL</h4>
+                  <p className="text-xs text-slate-500 font-mono">{window.location.origin}/operator-panel</p>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
               <table className="w-full text-left">
                 <thead className="bg-slate-50/50 border-b border-slate-100">
                   <tr className="text-slate-500 text-[10px] font-black uppercase tracking-widest">
@@ -1453,10 +1560,32 @@ export const AdminPanel = () => {
                 </tbody>
               </table>
             </div>
+          </div>
           )}
 
           {activeTab === 'crew' && (
-            <div className="overflow-x-auto">
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="p-4 bg-primary/5 border border-primary/10 rounded-2xl flex items-center gap-4">
+                  <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center text-primary">
+                    <LogIn size={20} />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-800">Supervisor Login URL</h4>
+                    <p className="text-xs text-slate-500 font-mono">{window.location.origin}/supervisor-panel</p>
+                  </div>
+                </div>
+                <div className="p-4 bg-accent/5 border border-accent/10 rounded-2xl flex items-center gap-4">
+                  <div className="w-10 h-10 bg-accent/10 rounded-xl flex items-center justify-center text-accent">
+                    <LogIn size={20} />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-800">Driver Login URL</h4>
+                    <p className="text-xs text-slate-500 font-mono">{window.location.origin}/driver-panel</p>
+                  </div>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
               <table className="w-full text-left">
                 <thead className="bg-slate-50/50 border-b border-slate-100">
                   <tr className="text-slate-500 text-[10px] font-black uppercase tracking-widest">
@@ -1489,6 +1618,7 @@ export const AdminPanel = () => {
                 </tbody>
               </table>
             </div>
+          </div>
           )}
 
           {activeTab === 'security' && (
@@ -2277,7 +2407,6 @@ export const AdminPanel = () => {
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Email</label>
                     <input name="email" type="email" defaultValue={editingItem?.email} className="input-field" required />
                   </div>
-                  <p className="text-xs text-slate-500 italic">Note: Staff must sign-up using their email.</p>
                 </>
               )}
 

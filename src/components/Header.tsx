@@ -72,8 +72,9 @@ export const Header: React.FC = () => {
   };
 
   return (
-    <header className={`sticky top-0 z-50 transition-all duration-500 h-20 flex items-center ${scrolled ? 'glass-hard shadow-lg' : 'bg-white/95 backdrop-blur-md border-b border-slate-100'}`}>
-      <div className="max-w-7xl mx-auto px-6 w-full flex justify-between items-center">
+    <header className={`sticky top-0 z-50 transition-all duration-500 flex flex-col ${scrolled ? 'glass-hard shadow-lg' : 'bg-white/95 backdrop-blur-md border-b border-slate-100'}`}>
+      <div className="h-20 flex items-center w-full">
+        <div className="max-w-7xl mx-auto px-6 w-full flex justify-between items-center">
         {/* Brand Logo */}
         <div className="flex items-center gap-4">
           <Link 
@@ -162,6 +163,7 @@ export const Header: React.FC = () => {
           </button>
         </div>
       </div>
+    </div>
 
       {/* Mobile Navigation Menu */}
       <AnimatePresence>

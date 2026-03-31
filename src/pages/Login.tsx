@@ -8,11 +8,12 @@ import { Bus, Mail, Lock, LogIn, Chrome, UserPlus, User } from 'lucide-react';
 
 interface LoginProps {
   onSuccess: () => void;
-  defaultRole?: 'admin' | 'operator' | 'supervisor';
+  defaultRole?: 'admin' | 'operator' | 'supervisor' | 'driver';
 }
 
 export const Login: React.FC<LoginProps> = ({ onSuccess, defaultRole }) => {
   const { t } = useLanguage();
+  const isStaffLogin = defaultRole === 'operator' || defaultRole === 'supervisor' || defaultRole === 'admin' || defaultRole === 'driver';
   const [isLogin, setIsLogin] = useState(true);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -20,9 +21,7 @@ export const Login: React.FC<LoginProps> = ({ onSuccess, defaultRole }) => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [loginMethod, setLoginMethod] = useState<'email' | 'id'>('email');
-
-  const isStaffLogin = defaultRole === 'operator' || defaultRole === 'supervisor';
+  const [loginMethod, setLoginMethod] = useState<'email' | 'id'>(isStaffLogin ? 'id' : 'email');
 
   const handleGoogleLogin = async () => {
     const provider = new GoogleAuthProvider();
@@ -46,53 +45,68 @@ export const Login: React.FC<LoginProps> = ({ onSuccess, defaultRole }) => {
           // Custom ID login
           const { collection, query, where, getDocs } = await import('firebase/firestore');
           const { db } = await import('../firebase');
-          const q = query(collection(db, 'staff_credentials'), where('id', '==', customId), where('password', '==', password));
+          const q = query(collection(db, 'staff_credentials'), where('id', '==', customId));
           const snapshot = await getDocs(q);
-          if (snapshot.empty) {
+          if (snapshot.empty || snapshot.docs[0].data().password !== password) {
             throw new Error(t('আইডি বা পাসওয়ার্ড ভুল।', 'Invalid ID or password.'));
           }
-          // For custom login, we need to sign in as a generic user or handle session manually
-          // This is insecure, but requested.
-          // We'll sign in as a placeholder user or just redirect.
-          // For now, let's assume we have a generic staff account for custom login.
+          
+          const staffData = snapshot.docs[0].data();
+          if (defaultRole && staffData.role !== defaultRole && defaultRole !== 'admin') {
+            throw new Error(t(`এই আইডিটি ${staffData.role} হিসেবে অনুমোদিত, ${defaultRole} হিসেবে নয়।`, `This ID is authorized as ${staffData.role}, not ${defaultRole}.`));
+          }
+
           localStorage.setItem('customStaffId', customId);
-          await signInWithEmailAndPassword(auth, 'staff@swiftline.com', 'password123');
+          
+          // Use provided email or fallback to a generated one
+          const staffEmail = staffData.email || `${customId}@swiftline.staff`;
+          
+          // Try to sign in with the email and password from staff_credentials
+          try {
+            const userCredential = await signInWithEmailAndPassword(auth, staffEmail, password);
+            // Ensure users doc exists for staff
+            await setDoc(doc(db, 'users', userCredential.user.uid), {
+              email: staffEmail,
+              role: staffData.role,
+              profileId: staffData.id || customId,
+              updatedAt: new Date().toISOString()
+            }, { merge: true });
+          } catch (authErr: any) {
+            // If user doesn't exist in Auth, create them (since we already verified in Firestore)
+            if (authErr.code === 'auth/user-not-found' || authErr.code === 'auth/invalid-credential' || authErr.code === 'auth/invalid-email') {
+              try {
+                const userCredential = await createUserWithEmailAndPassword(auth, staffEmail, password);
+                // Create users doc for staff
+                await setDoc(doc(db, 'users', userCredential.user.uid), {
+                  email: staffEmail,
+                  role: staffData.role,
+                  profileId: staffData.id || customId,
+                  createdAt: new Date().toISOString()
+                });
+              } catch (createErr: any) {
+                if (createErr.code === 'auth/email-already-in-use') {
+                  throw new Error(t('আইডি বা পাসওয়ার্ড ভুল।', 'Invalid ID or password.'));
+                }
+                throw new Error(createErr.message);
+              }
+            } else {
+              throw authErr;
+            }
+          }
         }
       } else {
-        if (isStaffLogin) {
-          const { doc, getDoc } = await import('firebase/firestore');
-          const { db } = await import('../firebase');
-          const staffDoc = await getDoc(doc(db, 'staff_emails', email));
-          if (!staffDoc.exists()) {
-            throw new Error(t('এই ইমেইলটি স্টাফ নিবন্ধনের জন্য অনুমোদিত নয়।', 'This email is not authorized for staff registration.'));
-          }
-          const staffData = staffDoc.data();
-          if (staffData.role !== defaultRole) {
-            throw new Error(t(`এই ইমেইলটি ${staffData.role} হিসেবে অনুমোদিত, ${defaultRole} হিসেবে নয়।`, `This email is authorized as ${staffData.role}, not ${defaultRole}.`));
-          }
-        }
+        // Sign up logic (only for passengers)
+        if (isStaffLogin) return;
+
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
         await updateProfile(userCredential.user, { displayName: name });
         
-        // Ensure role is set in users collection
         const { doc, setDoc } = await import('firebase/firestore');
         const { db } = await import('../firebase');
         
-        let role = defaultRole || 'passenger';
-        let profileId = null;
-        
-        if (isStaffLogin) {
-          const staffDoc = await getDoc(doc(db, 'staff_emails', email));
-          if (staffDoc.exists()) {
-            role = staffDoc.data().role;
-            profileId = staffDoc.data().profileId;
-          }
-        }
-
         await setDoc(doc(db, 'users', userCredential.user.uid), {
           email: userCredential.user.email,
-          role: role,
-          profileId: profileId,
+          role: 'passenger',
           createdAt: new Date().toISOString()
         });
       }
@@ -102,13 +116,21 @@ export const Login: React.FC<LoginProps> = ({ onSuccess, defaultRole }) => {
       if (err.code === 'auth/operation-not-allowed') {
         setError(t('ইমেইল/পাসওয়ার্ড সাইন-ইন পদ্ধতি নিষ্ক্রিয়। দয়া করে ফায়ারবেস কনসোল থেকে এটি সক্রিয় করুন।', 'Email/Password sign-in is disabled. Please enable it in the Firebase Console under Authentication > Sign-in method.'));
       } else if (isLogin) {
-        setError(t(`ইমেইল বা পাসওয়ার্ড ভুল: ${err.message}`, `Invalid email or password: ${err.message}`));
+        setError(err.message);
       } else {
         setError(err.message);
       }
     } finally {
       setLoading(false);
     }
+  };
+
+  const getTitle = () => {
+    if (defaultRole === 'operator') return t('অপারেটর লগইন', 'Operator Login');
+    if (defaultRole === 'supervisor') return t('সুপারভাইজার লগইন', 'Supervisor Login');
+    if (defaultRole === 'driver') return t('ড্রাইভার লগইন', 'Driver Login');
+    if (defaultRole === 'admin') return t('অ্যাডমিন লগইন', 'Admin Login');
+    return isLogin ? t('লগইন করুন', 'Login to SwiftLine') : t('নিবন্ধন করুন', 'Join SwiftLine');
   };
 
   return (
@@ -123,18 +145,17 @@ export const Login: React.FC<LoginProps> = ({ onSuccess, defaultRole }) => {
             <Bus className="text-white" size={32} />
           </div>
           <h2 className="text-3xl font-black text-primary tracking-tighter">
-            {defaultRole === 'operator' ? t('অপারেটর লগইন', 'Operator Login') : 
-             defaultRole === 'supervisor' ? t('স্টাফ লগইন', 'Staff Login') :
-             isLogin ? t('লগইন করুন', 'Login to SwiftLine') : t('নিবন্ধন করুন', 'Join SwiftLine')}
+            {getTitle()}
           </h2>
           <p className="text-slate-500 font-medium">
-            {isLogin ? t('আপনার অ্যাকাউন্ট অ্যাক্সেস করুন', 'Access your account') : t('নতুন অ্যাকাউন্ট তৈরি করুন', 'Create a new account')}
+            {isStaffLogin ? t('আপনার আইডি ও পাসওয়ার্ড দিয়ে লগইন করুন', 'Login with your ID & Password') : 
+             isLogin ? t('আপনার অ্যাকাউন্ট অ্যাক্সেস করুন', 'Access your account') : t('নতুন অ্যাকাউন্ট তৈরি করুন', 'Create a new account')}
           </p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-5">
           <AnimatePresence mode="wait">
-            {!isLogin && (
+            {!isLogin && !isStaffLogin && (
               <motion.div 
                 initial={{ opacity: 0, height: 0 }}
                 animate={{ opacity: 1, height: 'auto' }}
@@ -157,22 +178,24 @@ export const Login: React.FC<LoginProps> = ({ onSuccess, defaultRole }) => {
             )}
           </AnimatePresence>
 
-          <div className="flex gap-4 mb-4">
-            <button 
-              type="button"
-              onClick={() => setLoginMethod('email')}
-              className={`flex-1 py-3 rounded-xl font-bold text-sm ${loginMethod === 'email' ? 'bg-primary text-white' : 'bg-slate-100 text-slate-500'}`}
-            >
-              {t('ইমেইল', 'Email')}
-            </button>
-            <button 
-              type="button"
-              onClick={() => setLoginMethod('id')}
-              className={`flex-1 py-3 rounded-xl font-bold text-sm ${loginMethod === 'id' ? 'bg-primary text-white' : 'bg-slate-100 text-slate-500'}`}
-            >
-              {t('আইডি', 'Custom ID')}
-            </button>
-          </div>
+          {!isStaffLogin && (
+            <div className="flex gap-4 mb-4">
+              <button 
+                type="button"
+                onClick={() => setLoginMethod('email')}
+                className={`flex-1 py-3 rounded-xl font-bold text-sm ${loginMethod === 'email' ? 'bg-primary text-white' : 'bg-slate-100 text-slate-500'}`}
+              >
+                {t('ইমেইল', 'Email')}
+              </button>
+              <button 
+                type="button"
+                onClick={() => setLoginMethod('id')}
+                className={`flex-1 py-3 rounded-xl font-bold text-sm ${loginMethod === 'id' ? 'bg-primary text-white' : 'bg-slate-100 text-slate-500'}`}
+              >
+                {t('আইডি', 'Custom ID')}
+              </button>
+            </div>
+          )}
 
           {loginMethod === 'email' ? (
             <div className="space-y-2">
@@ -233,28 +256,32 @@ export const Login: React.FC<LoginProps> = ({ onSuccess, defaultRole }) => {
           </button>
         </form>
 
-        <div className="relative py-4">
-          <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-100"></div></div>
-          <div className="relative flex justify-center text-xs uppercase"><span className="bg-white px-4 text-slate-400 font-bold tracking-widest">{t('অথবা', 'Or Continue With')}</span></div>
-        </div>
+        {!isStaffLogin && (
+          <>
+            <div className="relative py-4">
+              <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-slate-100"></div></div>
+              <div className="relative flex justify-center text-xs uppercase"><span className="bg-white px-4 text-slate-400 font-bold tracking-widest">{t('অথবা', 'Or Continue With')}</span></div>
+            </div>
 
-        <button 
-          onClick={handleGoogleLogin}
-          className="w-full py-4 bg-white border border-slate-200 rounded-2xl font-bold text-slate-600 hover:bg-slate-50 transition-all flex items-center justify-center gap-3 shadow-sm"
-        >
-          <Chrome size={20} className="text-red-500" />
-          <span>Google {t('দিয়ে লগইন', 'Login with Google')}</span>
-        </button>
+            <button 
+              onClick={handleGoogleLogin}
+              className="w-full py-4 bg-white border border-slate-200 rounded-2xl font-bold text-slate-600 hover:bg-slate-50 transition-all flex items-center justify-center gap-3 shadow-sm"
+            >
+              <Chrome size={20} className="text-red-500" />
+              <span>Google {t('দিয়ে লগইন', 'Login with Google')}</span>
+            </button>
 
-        <p className="text-center text-sm text-slate-500">
-          {isLogin ? t('অ্যাকাউন্ট নেই?', "Don't have an account?") : t('ইতিমধ্যে অ্যাকাউন্ট আছে?', "Already have an account?")} 
-          <button 
-            onClick={() => setIsLogin(!isLogin)}
-            className="text-accent font-bold hover:underline ml-1"
-          >
-            {isLogin ? t('নিবন্ধন করুন', 'Sign Up') : t('লগইন করুন', 'Login')}
-          </button>
-        </p>
+            <p className="text-center text-sm text-slate-500">
+              {isLogin ? t('অ্যাকাউন্ট নেই?', "Don't have an account?") : t('ইতিমধ্যে অ্যাকাউন্ট আছে?', "Already have an account?")} 
+              <button 
+                onClick={() => setIsLogin(!isLogin)}
+                className="text-accent font-bold hover:underline ml-1"
+              >
+                {isLogin ? t('নিবন্ধন করুন', 'Sign Up') : t('লগইন করুন', 'Login')}
+              </button>
+            </p>
+          </>
+        )}
       </motion.div>
     </div>
   );

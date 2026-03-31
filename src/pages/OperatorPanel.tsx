@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, onSnapshot, addDoc, updateDoc, doc, query, where, getDocs, limit, serverTimestamp, setDoc, getDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
+import { onAuthStateChanged } from 'firebase/auth';
 import { Counter, Trip, Booking, Passenger, SeatLock, Route, Bus, Operator, Crew } from '../types';
 import { useLanguage } from '../hooks/useLanguage';
 import { SeatMap } from '../components/SeatMap';
@@ -83,21 +84,72 @@ export const OperatorPanel = () => {
   };
 
   useEffect(() => {
-    const savedOperator = localStorage.getItem('operator_session');
-    if (savedOperator) {
-      const opData = JSON.parse(savedOperator);
-      setUser(opData);
-      setOperatorProfile(opData);
-      // Auto-select the counter
-      const fetchCounter = async () => {
-        const counterDoc = await getDoc(doc(db, 'counters', opData.counterId));
-        if (counterDoc.exists()) {
-          setSelectedCounter({ id: counterDoc.id, ...counterDoc.data() } as Counter);
+    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
+      if (currentUser) {
+        setUser(currentUser);
+        // Fetch user doc to get profileId
+        let profileId = null;
+        let role = null;
+        
+        const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+        if (userDoc.exists()) {
+          const userData = userDoc.data();
+          profileId = userData.profileId;
+          role = userData.role;
+        } else if (currentUser.email) {
+          // Fallback to staff_emails
+          const staffEmailDoc = await getDoc(doc(db, 'staff_emails', currentUser.email));
+          if (staffEmailDoc.exists()) {
+            const staffEmailData = staffEmailDoc.data();
+            profileId = staffEmailData.profileId;
+            role = staffEmailData.role;
+            
+            // Auto-create users doc for future
+            await setDoc(doc(db, 'users', currentUser.uid), {
+              email: currentUser.email,
+              role: role,
+              profileId: profileId,
+              createdAt: new Date().toISOString()
+            });
+          }
         }
-      };
-      fetchCounter();
-    }
-    setIsAuthReady(true);
+
+        if (profileId && (role === 'operator' || role === 'admin')) {
+          const opDoc = await getDoc(doc(db, 'operators', profileId));
+          if (opDoc.exists()) {
+            const opData = { id: opDoc.id, ...opDoc.data() } as Operator;
+            setOperatorProfile(opData);
+            
+            // Auto-select the counter
+            const counterDoc = await getDoc(doc(db, 'counters', opData.counterId));
+            if (counterDoc.exists()) {
+              setSelectedCounter({ id: counterDoc.id, ...counterDoc.data() } as Counter);
+            }
+          }
+        }
+      } else {
+        // Check for legacy operator_session
+        const savedOperator = localStorage.getItem('operator_session');
+        if (savedOperator) {
+          const opData = JSON.parse(savedOperator);
+          setUser(opData);
+          setOperatorProfile(opData);
+          // Auto-select the counter
+          const fetchCounter = async () => {
+            const counterDoc = await getDoc(doc(db, 'counters', opData.counterId));
+            if (counterDoc.exists()) {
+              setSelectedCounter({ id: counterDoc.id, ...counterDoc.data() } as Counter);
+            }
+          };
+          fetchCounter();
+        } else {
+          setUser(null);
+          setOperatorProfile(null);
+          setSelectedCounter(null);
+        }
+      }
+      setIsAuthReady(true);
+    });
 
     const unsubCounters = onSnapshot(collection(db, 'counters'), (snapshot) => {
       setCounters(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Counter)));
@@ -119,6 +171,7 @@ export const OperatorPanel = () => {
     });
 
     return () => {
+      unsubscribeAuth();
       unsubCounters();
       unsubRoutes();
       unsubBuses();
@@ -182,21 +235,56 @@ export const OperatorPanel = () => {
   const handleCustomLogin = async (id: string, pass: string) => {
     setLoginError(null);
     try {
-      const q = query(collection(db, 'operators'), where('customId', '==', id), where('password', '==', pass));
-      const snap = await getDocs(q);
+      const { signInWithEmailAndPassword, createUserWithEmailAndPassword } = await import('firebase/auth');
       
-      if (!snap.empty) {
-        const opData = { id: snap.docs[0].id, ...snap.docs[0].data() } as Operator;
-        setUser(opData);
-        setOperatorProfile(opData);
-        localStorage.setItem('operator_session', JSON.stringify(opData));
-        
-        const counterDoc = await getDoc(doc(db, 'counters', opData.counterId));
-        if (counterDoc.exists()) {
-          setSelectedCounter({ id: counterDoc.id, ...counterDoc.data() } as Counter);
-        }
-      } else {
+      // First verify in Firestore
+      const q = query(collection(db, 'staff_credentials'), where('id', '==', id));
+      const snapshot = await getDocs(q);
+      
+      if (snapshot.empty || snapshot.docs[0].data().password !== pass) {
         setLoginError('Invalid ID or Password.');
+        return;
+      }
+      
+      const staffData = snapshot.docs[0].data();
+      if (staffData.role !== 'operator') {
+        setLoginError(`This ID is authorized as ${staffData.role}, not operator.`);
+        return;
+      }
+
+      const staffEmail = staffData.email || `${id}@swiftline.staff`;
+      
+      // Try to sign in with Firebase Auth
+      try {
+        const userCredential = await signInWithEmailAndPassword(auth, staffEmail, pass);
+        // Ensure users doc exists
+        await setDoc(doc(db, 'users', userCredential.user.uid), {
+          email: staffEmail,
+          role: 'operator',
+          profileId: snapshot.docs[0].id,
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+      } catch (authErr: any) {
+        if (authErr.code === 'auth/user-not-found' || authErr.code === 'auth/invalid-credential' || authErr.code === 'auth/invalid-email') {
+          try {
+            const userCredential = await createUserWithEmailAndPassword(auth, staffEmail, pass);
+            // Create users doc
+            await setDoc(doc(db, 'users', userCredential.user.uid), {
+              email: staffEmail,
+              role: 'operator',
+              profileId: snapshot.docs[0].id,
+              createdAt: new Date().toISOString()
+            });
+          } catch (createErr: any) {
+            if (createErr.code === 'auth/email-already-in-use') {
+              setLoginError('Invalid ID or Password.');
+            } else {
+              setLoginError(createErr.message);
+            }
+          }
+        } else {
+          setLoginError(authErr.message);
+        }
       }
     } catch (err) {
       setLoginError('Error during login.');

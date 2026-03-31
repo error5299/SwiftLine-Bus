@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
-import { collection, onSnapshot, query, where, updateDoc, doc, getDocs, getDoc } from 'firebase/firestore';
+import { collection, onSnapshot, query, where, updateDoc, doc, getDocs, getDoc, setDoc } from 'firebase/firestore';
 import { Trip, Booking, Passenger, Route, Counter, Crew, Bus } from '../types';
 import { useLanguage } from '../hooks/useLanguage';
 import { SeatMap } from '../components/SeatMap';
@@ -36,13 +36,52 @@ export const SupervisorPanel = () => {
   const [hasAutoSelected, setHasAutoSelected] = useState(false);
 
   useEffect(() => {
-    const savedSupervisor = localStorage.getItem('supervisor_session');
-    if (savedSupervisor) {
-      const supData = JSON.parse(savedSupervisor);
-      setUser(supData);
-      setSupervisorProfile(supData);
-    }
-    setIsAuthReady(true);
+    const unsubscribeAuth = auth.onAuthStateChanged(async (currentUser) => {
+      if (currentUser) {
+        setUser(currentUser);
+        let profileId = null;
+        let role = null;
+        
+        const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+        if (userDoc.exists()) {
+          const userData = userDoc.data();
+          profileId = userData.profileId;
+          role = userData.role;
+        } else if (currentUser.email) {
+          const staffEmailDoc = await getDoc(doc(db, 'staff_emails', currentUser.email));
+          if (staffEmailDoc.exists()) {
+            const staffEmailData = staffEmailDoc.data();
+            profileId = staffEmailData.profileId;
+            role = staffEmailData.role;
+            
+            await setDoc(doc(db, 'users', currentUser.uid), {
+              email: currentUser.email,
+              role: role,
+              profileId: profileId,
+              createdAt: new Date().toISOString()
+            });
+          }
+        }
+
+        if (profileId && (role === 'supervisor' || role === 'admin')) {
+          const supDoc = await getDoc(doc(db, 'crew', profileId));
+          if (supDoc.exists()) {
+            setSupervisorProfile({ id: supDoc.id, ...supDoc.data() } as Crew);
+          }
+        }
+      } else {
+        const savedSupervisor = localStorage.getItem('supervisor_session');
+        if (savedSupervisor) {
+          const supData = JSON.parse(savedSupervisor);
+          setUser(supData);
+          setSupervisorProfile(supData);
+        } else {
+          setUser(null);
+          setSupervisorProfile(null);
+        }
+      }
+      setIsAuthReady(true);
+    });
 
     const unsubTrips = onSnapshot(collection(db, 'trips'), (snapshot) => {
       setTrips(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Trip)));
@@ -61,6 +100,7 @@ export const SupervisorPanel = () => {
     });
 
     return () => {
+      unsubscribeAuth();
       unsubTrips();
       unsubRoutes();
       unsubBuses();
@@ -135,16 +175,54 @@ export const SupervisorPanel = () => {
   const handleCustomLogin = async (id: string, pass: string) => {
     setLoginError(null);
     try {
-      const q = query(collection(db, 'crew'), where('customId', '==', id), where('password', '==', pass));
-      const snap = await getDocs(q);
+      const { signInWithEmailAndPassword, createUserWithEmailAndPassword } = await import('firebase/auth');
       
-      if (!snap.empty) {
-        const supData = { id: snap.docs[0].id, ...snap.docs[0].data() } as Crew;
-        setUser(supData);
-        setSupervisorProfile(supData);
-        localStorage.setItem('supervisor_session', JSON.stringify(supData));
-      } else {
+      // First verify in Firestore
+      const q = query(collection(db, 'staff_credentials'), where('id', '==', id));
+      const snapshot = await getDocs(q);
+      
+      if (snapshot.empty || snapshot.docs[0].data().password !== pass) {
         setLoginError('Invalid ID or Password.');
+        return;
+      }
+      
+      const staffData = snapshot.docs[0].data();
+      if (staffData.role !== 'supervisor') {
+        setLoginError(`This ID is authorized as ${staffData.role}, not supervisor.`);
+        return;
+      }
+
+      const staffEmail = staffData.email || `${id}@swiftline.staff`;
+      
+      // Try to sign in with Firebase Auth
+      try {
+        const userCredential = await signInWithEmailAndPassword(auth, staffEmail, pass);
+        await setDoc(doc(db, 'users', userCredential.user.uid), {
+          email: staffEmail,
+          role: 'supervisor',
+          profileId: snapshot.docs[0].id,
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+      } catch (authErr: any) {
+        if (authErr.code === 'auth/user-not-found' || authErr.code === 'auth/invalid-credential' || authErr.code === 'auth/invalid-email') {
+          try {
+            const userCredential = await createUserWithEmailAndPassword(auth, staffEmail, pass);
+            await setDoc(doc(db, 'users', userCredential.user.uid), {
+              email: staffEmail,
+              role: 'supervisor',
+              profileId: snapshot.docs[0].id,
+              createdAt: new Date().toISOString()
+            });
+          } catch (createErr: any) {
+            if (createErr.code === 'auth/email-already-in-use') {
+              setLoginError('Invalid ID or Password.');
+            } else {
+              setLoginError(createErr.message);
+            }
+          }
+        } else {
+          setLoginError(authErr.message);
+        }
       }
     } catch (err) {
       setLoginError('Error during login.');
