@@ -99,7 +99,9 @@ export const Login: React.FC<LoginProps> = ({ onSuccess, defaultRole }) => {
       onSuccess();
     } catch (err: any) {
       console.error("Login error details:", err);
-      if (isLogin) {
+      if (err.code === 'auth/operation-not-allowed') {
+        setError(t('ইমেইল/পাসওয়ার্ড সাইন-ইন পদ্ধতি নিষ্ক্রিয়। দয়া করে ফায়ারবেস কনসোল থেকে এটি সক্রিয় করুন।', 'Email/Password sign-in is disabled. Please enable it in the Firebase Console under Authentication > Sign-in method.'));
+      } else if (isLogin) {
         setError(t(`ইমেইল বা পাসওয়ার্ড ভুল: ${err.message}`, `Invalid email or password: ${err.message}`));
       } else {
         setError(err.message);

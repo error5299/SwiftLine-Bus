@@ -5,30 +5,26 @@ import { useLanguage } from '../hooks/useLanguage';
 
 interface RouteMapperProps {
   counters: Counter[];
-  initialStops?: RouteStop[];
+  stops?: RouteStop[];
   onChange: (stops: RouteStop[]) => void;
 }
 
-export const RouteMapper: React.FC<RouteMapperProps> = ({ counters, initialStops = [], onChange }) => {
+export const RouteMapper: React.FC<RouteMapperProps> = ({ counters, stops = [], onChange }) => {
   const { t } = useLanguage();
-  const [stops, setStops] = useState<RouteStop[]>(initialStops);
 
   const addStop = () => {
     const newStops = [...stops, { counterId: '', distance: 0, travelTime: 0 }];
-    setStops(newStops);
     onChange(newStops);
   };
 
   const removeStop = (index: number) => {
     const newStops = stops.filter((_, i) => i !== index);
-    setStops(newStops);
     onChange(newStops);
   };
 
   const updateStop = (index: number, field: keyof RouteStop, value: any) => {
     const newStops = [...stops];
     newStops[index] = { ...newStops[index], [field]: value };
-    setStops(newStops);
     onChange(newStops);
   };
 
