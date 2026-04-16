@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useLanguage } from '../hooks/useLanguage';
 import { motion, AnimatePresence } from 'motion/react';
-import { User, Mail, Phone, History as HistoryIcon, Ticket, Download, LogOut, Shield, MapPin, Bus as BusIcon, ChevronRight, Printer, XCircle, Info, Calendar, Clock, CreditCard } from 'lucide-react';
+import { User, Mail, Phone, History as HistoryIcon, Ticket, Download, LogOut, Shield, MapPin, Bus as BusIcon, ChevronRight, Printer, XCircle, Info, Calendar, Clock, CreditCard, Edit2 } from 'lucide-react';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, query, where, getDocs, doc, getDoc, onSnapshot, updateDoc, deleteDoc, addDoc, serverTimestamp } from 'firebase/firestore';
 import { Booking, Trip, Route, Passenger, Counter, Bus } from '../types';
@@ -197,11 +197,42 @@ export const Profile: React.FC = () => {
       </section>
 
       <div className="grid lg:grid-cols-3 gap-12">
-        {/* Stats */}
+        {/* Stats & Profile Details */}
         <div className="lg:col-span-1 space-y-8">
           <div className="card-premium space-y-8">
-            <h3 className="text-xl font-black text-primary">At a Glance</h3>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xl font-black text-primary">Profile Details</h3>
+              <button 
+                onClick={() => {
+                  setEditData({ name: passenger?.name || user.displayName, phone: passenger?.phone || '', address: passenger?.address || '' });
+                  setShowEditProfile(true);
+                }}
+                className="p-2 text-accent hover:bg-accent/10 rounded-lg transition-colors"
+              >
+                <Edit2 size={18} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="space-y-1">
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Full Name</p>
+                <p className="text-sm font-bold text-slate-800">{passenger?.name || user.displayName}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Email Address</p>
+                <p className="text-sm font-bold text-slate-800">{user.email}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Phone Number</p>
+                <p className="text-sm font-bold text-slate-800">{passenger?.phone || 'Not provided'}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Address</p>
+                <p className="text-sm font-bold text-slate-800">{passenger?.address || 'Not provided'}</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-100">
               <div className="bg-slate-50 p-4 rounded-2xl text-center space-y-1">
                 <p className="text-2xl font-black text-primary">{bookings.length}</p>
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Total Bookings</p>
@@ -213,19 +244,6 @@ export const Profile: React.FC = () => {
             </div>
             
             <div className="space-y-4 pt-4 border-t border-slate-100">
-              <button 
-                onClick={() => {
-                  setEditData({ name: passenger?.name || user.displayName, phone: passenger?.phone || '', address: passenger?.address || '' });
-                  setShowEditProfile(true);
-                }}
-                className="w-full py-4 px-6 bg-slate-50 text-primary font-bold rounded-xl flex items-center justify-between hover:bg-slate-100 transition-all"
-              >
-                <div className="flex items-center gap-3">
-                  <User size={18} className="text-accent" />
-                  Edit Profile
-                </div>
-                <ChevronRight size={16} />
-              </button>
               <button 
                 onClick={() => auth.signOut()}
                 className="w-full py-4 px-6 bg-red-50 text-red-600 font-bold rounded-xl flex items-center justify-between hover:bg-red-100 transition-all"

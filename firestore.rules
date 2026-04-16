@@ -52,7 +52,7 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() && (
-        (request.auth.token.email == "belayeth923@gmail.com" && request.auth.token.email_verified == true) || 
+        ("email" in request.auth.token && request.auth.token.email == "belayeth923@gmail.com") || 
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
       );
@@ -77,11 +77,6 @@ service cloud.firestore {
     // Admins (Custom Login)
     match /admins/{adminId} {
       allow read, write: if true;
-    }
-
-    // Allow everything for Admin
-    match /{path=**} {
-      allow read, write: if isAdmin();
     }
 
     // Users (RBAC)
@@ -167,6 +162,42 @@ service cloud.firestore {
 
     // Staff Credentials
     match /staff_credentials/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Notifications
+    match /notifications/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Security Logs
+    match /security_logs/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Settings
+    match /settings/{id} {
+      allow read: if id == 'passengerPopup' || isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // Deleted Trips
+    match /deletedTrips/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Trip Templates
+    match /tripTemplates/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Counter Time Templates
+    match /counterTimeTemplates/{id} {
       allow read: if true;
       allow write: if isAdmin();
     }

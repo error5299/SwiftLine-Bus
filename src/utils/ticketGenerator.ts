@@ -45,12 +45,15 @@ export const getTicketHTML = async (
       
       <!-- Header -->
       <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px dashed #DEF2F1; padding-bottom: 24px; margin-bottom: 24px; position: relative; z-index: 10;">
-        <div>
-          <h1 style="margin: 0; font-size: 36px; font-weight: 900; color: #17252A; letter-spacing: -1px; text-transform: uppercase;">SwiftLine</h1>
-          <p style="margin: 4px 0 0 0; font-size: 14px; font-weight: 600; color: #3AAFA9; text-transform: uppercase; letter-spacing: 2px;">Premium Travel</p>
+        <div style="display: flex; align-items: center; gap: 16px;">
+          <div style="width: 60px; height: 60px; background: #17252A; border-radius: 16px; display: flex; align-items: center; justify-content: center; color: #FEFFFF; font-weight: 900; font-size: 24px;">SL</div>
+          <div>
+            <h1 style="margin: 0; font-size: 36px; font-weight: 900; color: #17252A; letter-spacing: -1px; text-transform: uppercase;">SwiftLine</h1>
+            <p style="margin: 4px 0 0 0; font-size: 14px; font-weight: 600; color: #3AAFA9; text-transform: uppercase; letter-spacing: 2px;">Premium Travel</p>
+          </div>
         </div>
         <div style="text-align: right;">
-          <div style="background: #17252A; color: #FEFFFF; padding: 8px 16px; border-radius: 8px; font-weight: 800; font-size: 14px; display: inline-block; margin-bottom: 8px; letter-spacing: 1px;">E-TICKET</div>
+          <div style="background: #17252A; color: #FEFFFF; padding: 8px 16px; border-radius: 12px; font-weight: 800; font-size: 14px; display: inline-block; margin-bottom: 8px; letter-spacing: 1px;">E-TICKET</div>
           <p style="margin: 0; font-size: 12px; font-weight: 600; color: #2B7A78;">ID: <span style="color: #17252A; font-weight: 800;">${booking.id}</span></p>
           <p style="margin: 4px 0 0 0; font-size: 10px; font-weight: 500; color: #888;">Booked: ${bookingDate}</p>
         </div>

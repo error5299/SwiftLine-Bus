@@ -11,11 +11,14 @@ export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 // Test connection
 async function testConnection() {
   try {
+    // Check if the database is reachable
     await getDocFromServer(doc(db, 'test', 'connection'));
+    console.log("Successfully connected to Firestore.");
   } catch (error) {
     if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error("Please check your Firebase configuration.");
+      console.error("Firebase client is offline. Please check your network connection.");
     }
+    // Skip logging for other errors (like permission denied) as this is simply a connection test
   }
 }
 testConnection();

@@ -4,57 +4,25 @@ import { auth, db } from '../firebase';
 import { signOut } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { useLanguage } from '../hooks/useLanguage';
-import { Bus, Search, Info, Ticket, Navigation, Phone, User, LogOut, Menu, X, Shield, ChevronDown } from 'lucide-react';
+import { Search, Info, Ticket, Navigation, Phone, User, LogOut, Menu, X, Shield, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 import { RealTimeClock } from './RealTimeClock';
+
+import { useAuth } from '../context/FirebaseProvider';
 
 export const Header: React.FC = () => {
   const { t } = useLanguage();
   const navigate = useNavigate();
   const location = useLocation();
-  const [user, setUser] = useState<any>(null);
-  const [role, setRole] = useState<string | null>(null);
+  const { user, role, isAuthReady } = useAuth();
   const [scrolled, setScrolled] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   useEffect(() => {
-    const unsub = auth.onAuthStateChanged(async (u) => {
-      setUser(u);
-      if (u) {
-        try {
-          const userDoc = await getDoc(doc(db, 'users', u.uid));
-          if (userDoc.exists()) {
-            setRole(userDoc.data().role);
-          } else if (u.email) {
-            // Check staff_emails as fallback
-            const staffDoc = await getDoc(doc(db, 'staff_emails', u.email));
-            if (staffDoc.exists()) {
-              setRole(staffDoc.data().role);
-            } else {
-              const opDoc = await getDoc(doc(db, 'operators', u.uid));
-              if (opDoc.exists()) setRole('operator');
-              else {
-                const supDoc = await getDoc(doc(db, 'supervisors', u.uid));
-                if (supDoc.exists()) setRole('supervisor');
-                else setRole('passenger');
-              }
-            }
-          } else {
-            setRole('passenger');
-          }
-        } catch (err) {
-          console.error("Error fetching role in header:", err);
-          setRole('passenger');
-        }
-      } else {
-        setRole(null);
-      }
-    });
     const handleScroll = () => setScrolled(window.scrollY > 20);
     window.addEventListener('scroll', handleScroll);
     return () => {
-      unsub();
       window.removeEventListener('scroll', handleScroll);
     };
   }, []);
@@ -81,10 +49,10 @@ export const Header: React.FC = () => {
             to="/"
             className="flex items-center gap-2 cursor-pointer group" 
           >
-            <div className="bg-primary p-2 rounded-xl group-hover:scale-110 transition-transform">
-              <Bus className="text-white" size={24} />
+            <div className="group-hover:scale-110 transition-transform">
+              <img src="https://www.belayet.pro.bd/wp-content/uploads/2026/03/SL-Logo.png" alt="SwiftLine Logo" className="w-40 h-40 object-contain" referrerPolicy="no-referrer" />
             </div>
-            <span className="text-2xl font-bold tracking-tighter text-primary">SwiftLine</span>
+
           </Link>
           
           <div className="hidden sm:block">
@@ -121,7 +89,7 @@ export const Header: React.FC = () => {
               <>
                 {role && role !== 'passenger' && (
                   <Link 
-                    to={role === 'admin' ? '/admin-portal' : role === 'operator' ? '/operator-panel' : '/supervisor-panel'}
+                    to={role === 'admin' ? '/admin' : role === 'operator' ? '/operator' : '/supervisor'}
                     className="flex items-center gap-2 bg-primary/10 px-4 py-2 rounded-xl text-sm font-bold text-primary hover:bg-primary/20 transition-colors"
                   >
                     <Shield size={18} />
@@ -219,7 +187,7 @@ export const Header: React.FC = () => {
                 <div className="space-y-2">
                   {role && role !== 'passenger' && (
                     <Link 
-                      to={role === 'admin' ? '/admin-portal' : role === 'operator' ? '/operator-panel' : '/supervisor-panel'}
+                      to={role === 'admin' ? '/admin' : role === 'operator' ? '/operator' : '/supervisor'}
                       onClick={() => setIsMenuOpen(false)}
                       className="w-full flex items-center gap-4 p-4 rounded-2xl text-base font-bold bg-primary/10 text-primary"
                     >

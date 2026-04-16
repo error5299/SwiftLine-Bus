@@ -6,6 +6,7 @@ import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged } from 'firebase/auth';
 import { Counter, Operator, Route, Bus, Crew, Passenger, WalletTransaction, Trip, RouteStop, TripCounterTime, Booking, TripTemplate, CounterTimeTemplate } from '../types';
 import { useLanguage } from '../hooks/useLanguage';
+import { useFirebaseData, useAuth } from '../context/FirebaseProvider';
 import { Plus, Edit2, Trash2, Wallet, Map, Bus as BusIcon, Users, UserCheck, ShieldCheck, Search, X, LogIn, Navigation, LayoutDashboard, TrendingUp, Activity, Clock, LogOut, Globe, Printer, Map as MapIcon, Star, Filter, ChevronRight, Wifi, Coffee, Zap, Info, MapPin, History as HistoryIcon, AlertCircle, Shield, User } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Login } from '../components/Login';
@@ -23,23 +24,27 @@ import {
 const TZ = 'Asia/Dhaka';
 
 export const AdminPanel = () => {
+  console.log("AdminPanel rendered");
   const navigate = useNavigate();
   const { t } = useLanguage();
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'tracking' | 'counters' | 'operators' | 'routes' | 'fleet' | 'crew' | 'passengers' | 'trips' | 'tripHistory' | 'tripCounterTimes' | 'tripTemplates' | 'security'>('dashboard');
+  const { user: authUser, role: authRole, isAdmin: authIsAdmin, isAuthReady: authIsReady } = useAuth();
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'tracking' | 'counters' | 'operators' | 'routes' | 'fleet' | 'crew' | 'passengers' | 'trips' | 'tripHistory' | 'tripCounterTimes' | 'tripTemplates' | 'security' | 'popupSettings'>('dashboard');
   const [searchTerm, setSearchTerm] = useState('');
-  const [trips, setTrips] = useState<Trip[]>([]);
-  const [tripTemplates, setTripTemplates] = useState<TripTemplate[]>([]);
-  const [counterTimeTemplates, setCounterTimeTemplates] = useState<CounterTimeTemplate[]>([]);
-  const [bookings, setBookings] = useState<Booking[]>([]);
-  const [tripCounterTimes, setTripCounterTimes] = useState<TripCounterTime[]>([]);
-  const [counters, setCounters] = useState<Counter[]>([]);
-  const [operators, setOperators] = useState<Operator[]>([]);
-  const [routes, setRoutes] = useState<Route[]>([]);
-  const [buses, setBuses] = useState<Bus[]>([]);
-  const [crew, setCrew] = useState<Crew[]>([]);
-  const [passengers, setPassengers] = useState<Passenger[]>([]);
-  const [notifications, setNotifications] = useState<any[]>([]);
-  const [securityLogs, setSecurityLogs] = useState<any[]>([]);
+  const data = useFirebaseData();
+  const trips = data.trips || [];
+  const tripTemplates = data.tripTemplates || [];
+  const counterTimeTemplates = data.counterTimeTemplates || [];
+  const bookings = data.bookings || [];
+  const tripCounterTimes = data.tripCounterTimes || [];
+  const counters = data.counters || [];
+  const operators = data.operators || [];
+  const routes = data.routes || [];
+  const buses = data.buses || [];
+  const crew = data.crew || [];
+  const passengers = data.passengers || [];
+  const notifications = data.notifications || [];
+  const securityLogs = data.security_logs || [];
+  const deletedTrips = data.deletedTrips || [];
   const [showNotifications, setShowNotifications] = useState(false);
   const [securitySettings, setSecuritySettings] = useState({
     ipWhitelisting: false,
@@ -48,28 +53,53 @@ export const AdminPanel = () => {
     allowedIPs: ['127.0.0.1', '192.168.1.1']
   });
   
+  useEffect(() => {
+    const fetchSecuritySettings = async () => {
+      try {
+        const docSnap = await getDoc(doc(db, 'settings', 'security'));
+        if (docSnap.exists()) {
+          setSecuritySettings(docSnap.data() as any);
+        }
+      } catch (err) {
+        handleFirestoreError(err, OperationType.GET, 'settings/security');
+      }
+    };
+    fetchSecuritySettings();
+  }, []);
+
+  useEffect(() => {
+    const saveSecuritySettings = async () => {
+      try {
+        await setDoc(doc(db, 'settings', 'security'), securitySettings, { merge: true });
+      } catch (err) {
+        console.error('Error saving security settings:', err);
+      }
+    };
+    saveSecuritySettings();
+  }, [securitySettings]);
+
   const [user, setUser] = useState<any>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
+
+  useEffect(() => {
+    if (authIsReady) {
+      setUser(authUser);
+      setIsAdmin(authIsAdmin);
+      setIsAuthReady(true);
+    }
+  }, [authIsReady, authUser, authIsAdmin]);
   const [showModal, setShowModal] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ collection: string, id: string } | null>(null);
   const [routeStops, setRouteStops] = useState<RouteStop[]>([]);
+  const [routeFilter, setRouteFilter] = useState({ name: '', activeOnly: true });
   const [selectedTrip, setSelectedTrip] = useState<Trip | null>(null);
   const [selectedCounterId, setSelectedCounterId] = useState<string>('');
   const [selectedTripForBookings, setSelectedTripForBookings] = useState<Trip | null>(null);
   const [selectedDate, setSelectedDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
   const [dashboardDate, setDashboardDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
-
-  // Stats for Dashboard
-  const stats = {
-    totalRevenue: bookings.filter(b => b.status === 'confirmed').reduce((acc, b) => acc + (b.totalFare || 0), 0),
-    activeTrips: trips.filter(t => t.status === 'departed').length,
-    totalBuses: buses.length,
-    totalPassengers: passengers.length,
-    todayTrips: trips.filter(t => new Date(t.departureTime).toDateString() === new Date().toDateString()).length
-  };
 
   const chartData = Array.from({ length: 7 }).map((_, i) => {
     const date = new Date();
@@ -86,6 +116,15 @@ export const AdminPanel = () => {
   }).reverse();
 
   const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042'];
+
+  // Stats for Dashboard
+  const stats = {
+    totalRevenue: bookings.filter(b => b.status === 'confirmed').reduce((acc, b) => acc + (b.totalFare || 0), 0),
+    activeTrips: trips.filter(t => t.status === 'departed' || t.status === 'scheduled').length,
+    totalBuses: buses.length,
+    totalPassengers: passengers.length,
+    todayTrips: trips.filter(t => new Date(t.departureTime).toDateString() === new Date().toDateString()).length
+  };
 
   const filteredData = (data: any[]) => {
     if (!searchTerm) return data;
@@ -104,131 +143,6 @@ export const AdminPanel = () => {
       setRouteStops([]);
     }
   }, [editingItem, activeTab]);
-
-  useEffect(() => {
-    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
-      if (currentUser) {
-        setUser(currentUser);
-        let role = null;
-        
-        const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
-        if (userDoc.exists()) {
-          role = userDoc.data().role;
-        } else if (currentUser.email) {
-          const staffEmailDoc = await getDoc(doc(db, 'staff_emails', currentUser.email));
-          if (staffEmailDoc.exists()) {
-            role = staffEmailDoc.data().role;
-            await setDoc(doc(db, 'users', currentUser.uid), {
-              email: currentUser.email,
-              role: role,
-              createdAt: new Date().toISOString()
-            });
-          }
-        }
-
-        if (role === 'admin') {
-          setIsAdmin(true);
-        }
-      } else {
-        const savedAdmin = localStorage.getItem('admin_session');
-        if (savedAdmin) {
-          const adminData = JSON.parse(savedAdmin);
-          setUser(adminData);
-          setIsAdmin(true);
-        } else {
-          setUser(null);
-          setIsAdmin(false);
-        }
-      }
-      setIsAuthReady(true);
-    });
-
-    return () => unsubscribeAuth();
-  }, []);
-
-  const [deletedTrips, setDeletedTrips] = useState<{ coachNumber: string, baseDepartureTime: string }[]>([]);
-  
-  useEffect(() => {
-    if (!isAdmin) return;
-
-    const unsubDeletedTrips = onSnapshot(collection(db, 'deletedTrips'), (snapshot) => {
-      setDeletedTrips(snapshot.docs.map(doc => doc.data() as { coachNumber: string, baseDepartureTime: string }));
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'deletedTrips'));
-
-    const unsubCounters = onSnapshot(collection(db, 'counters'), (snapshot) => {
-      setCounters(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Counter)));
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'counters'));
-
-    const unsubOperators = onSnapshot(collection(db, 'operators'), (snapshot) => {
-      setOperators(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Operator)));
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'operators'));
-
-    const unsubRoutes = onSnapshot(collection(db, 'routes'), (snapshot) => {
-      setRoutes(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Route)));
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'routes'));
-
-    const unsubBuses = onSnapshot(collection(db, 'buses'), (snapshot) => {
-      setBuses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Bus)));
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'buses'));
-
-    const unsubCrew = onSnapshot(collection(db, 'crew'), (snapshot) => {
-      setCrew(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Crew)));
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'crew'));
-
-    const unsubPassengers = onSnapshot(collection(db, 'passengers'), (snapshot) => {
-      setPassengers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Passenger)));
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'passengers'));
-
-    const unsubTrips = onSnapshot(collection(db, 'trips'), (snapshot) => {
-      const updatedTrips = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Trip));
-      setTrips(updatedTrips);
-      setSelectedTrip(prev => {
-        if (!prev) return null;
-        const updated = updatedTrips.find(t => t.id === prev.id);
-        return updated || null;
-      });
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'trips'));
-
-    const unsubBookings = onSnapshot(collection(db, 'bookings'), (snapshot) => {
-      setBookings(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Booking)));
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'bookings'));
-
-    const unsubTripCounterTimes = onSnapshot(collection(db, 'tripCounterTimes'), (snapshot) => {
-      setTripCounterTimes(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as TripCounterTime)));
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'tripCounterTimes'));
-
-    const unsubTripTemplates = onSnapshot(collection(db, 'tripTemplates'), (snapshot) => {
-      setTripTemplates(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as TripTemplate)));
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'tripTemplates'));
-
-    const unsubCounterTimeTemplates = onSnapshot(collection(db, 'counterTimeTemplates'), (snapshot) => {
-      setCounterTimeTemplates(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as CounterTimeTemplate)));
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'counterTimeTemplates'));
-
-    const unsubNotifications = onSnapshot(query(collection(db, 'notifications'), orderBy('timestamp', 'desc')), (snapshot) => {
-      setNotifications(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
-
-    const unsubSecurityLogs = onSnapshot(query(collection(db, 'security_logs'), orderBy('timestamp', 'desc')), (snapshot) => {
-      setSecurityLogs(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
-
-    return () => {
-      unsubCounters();
-      unsubOperators();
-      unsubRoutes();
-      unsubBuses();
-      unsubCrew();
-      unsubPassengers();
-      unsubTrips();
-      unsubBookings();
-      unsubTripCounterTimes();
-      unsubTripTemplates();
-      unsubCounterTimeTemplates();
-      unsubNotifications();
-      unsubSecurityLogs();
-    };
-  }, [isAdmin]);
 
   // Audit Log Helper
   const logAdminAction = async (action: string, collectionName: string, data: any) => {
@@ -424,6 +338,19 @@ export const AdminPanel = () => {
     setUser(null);
     setIsAdmin(false);
     localStorage.removeItem('admin_session');
+  };
+
+  const handleRevokeSessions = async () => {
+    if (!window.confirm('Are you sure you want to revoke all active sessions? This will force all users to log in again.')) return;
+    try {
+      await updateDoc(doc(db, 'settings', 'security'), {
+        sessionRevocationTimestamp: serverTimestamp()
+      });
+      alert('All sessions revoked successfully.');
+    } catch (err) {
+      console.error('Error revoking sessions:', err);
+      alert('Failed to revoke sessions.');
+    }
   };
 
   if (!isAuthReady) return null;
@@ -797,6 +724,7 @@ export const AdminPanel = () => {
             { id: 'crew', label: 'Crew', icon: Users },
             { id: 'passengers', label: 'Passengers', icon: Users },
             { id: 'security', label: 'Security', icon: ShieldCheck },
+            { id: 'popupSettings', label: 'Popup Settings', icon: Info },
           ].map(tab => (
             <button
               key={tab.id}
@@ -949,10 +877,10 @@ export const AdminPanel = () => {
               {/* Stats Grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 {[
-                  { label: 'Total Revenue', value: `৳ ${bookings.filter(b => b.status === 'confirmed').reduce((acc, b) => acc + (b.totalFare || 0), 0).toLocaleString()}`, icon: TrendingUp, color: 'text-accent', bg: 'glass-hard' },
-                  { label: 'Active Trips', value: trips.filter(t => t.status === 'departed').length, icon: Activity, color: 'text-emerald-600', bg: 'glass-hard' },
-                  { label: 'Total Buses', value: buses.length, icon: BusIcon, color: 'text-teal-600', bg: 'glass-hard' },
-                  { label: 'Total Passengers', value: passengers.length, icon: Users, color: 'text-green-600', bg: 'glass-hard' },
+                  { label: 'Total Revenue', value: `৳ ${stats.totalRevenue.toLocaleString()}`, icon: TrendingUp, color: 'text-accent', bg: 'glass-hard' },
+                  { label: 'Active Trips', value: stats.activeTrips, icon: Activity, color: 'text-emerald-600', bg: 'glass-hard' },
+                  { label: 'Total Buses', value: stats.totalBuses, icon: BusIcon, color: 'text-teal-600', bg: 'glass-hard' },
+                  { label: 'Total Passengers', value: stats.totalPassengers, icon: Users, color: 'text-green-600', bg: 'glass-hard' },
                 ].map((stat, i) => (
                   <div key={i} className={`${stat.bg} p-6 rounded-[32px] shadow-sm border border-white/50 relative overflow-hidden group hover:scale-[1.02] transition-all`}>
                     <div className="absolute -right-4 -bottom-4 opacity-5 group-hover:opacity-10 transition-opacity">
@@ -1145,7 +1073,7 @@ export const AdminPanel = () => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-50">
-                      {filteredData(counters).map(counter => {
+                      {filteredData(counters).sort((a, b) => a.name.localeCompare(b.name)).map(counter => {
                         const counterRevenue = bookings.filter(b => b.bookedByCounterId === counter.id && b.status === 'confirmed').reduce((acc, b) => acc + (b.totalFare || 0), 0);
                         return (
                         <tr key={counter.id} className="hover:bg-slate-50/50 transition-colors">
@@ -1176,44 +1104,85 @@ export const AdminPanel = () => {
               )}
 
           {activeTab === 'routes' && (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead className="bg-slate-50/50 border-b border-slate-100">
-                  <tr className="text-slate-500 text-[10px] font-black uppercase tracking-widest">
-                    <th className="px-6 py-4">Name</th>
-                    <th className="px-6 py-4">Stops</th>
-                    <th className="px-6 py-4 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50">
-                  {filteredData(routes).map(route => (
-                    <tr key={route.id} className="hover:bg-slate-50/50 transition-colors">
-                      <td className="px-6 py-4 font-bold text-slate-800">{route.name}</td>
-                      <td className="px-6 py-4">
-                        <div className="flex flex-wrap gap-1">
-                          {route.stops.map((stop, idx) => {
-                            const counterId = typeof stop === 'string' ? stop : stop.counterId;
-                            const counter = counters.find(c => c.id === counterId);
-                            return (
-                              <span key={idx} className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider">
-                                {counter?.name || counterId}
-                              </span>
-                            );
-                          })}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 text-right space-x-2">
-                        <button onClick={() => { setEditingItem(route); setShowModal(true); }} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
-                          <Edit2 size={18} />
-                        </button>
-                        <button onClick={() => handleDelete('routes', route.id)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors">
-                          <Trash2 size={18} />
-                        </button>
-                      </td>
+            <div className="space-y-6">
+              <div className="flex flex-col md:flex-row gap-4 bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
+                <div className="flex-1 relative group">
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-accent transition-colors" size={20} />
+                  <input 
+                    type="text" 
+                    placeholder="Search routes by name..."
+                    className="input-field pl-12"
+                    value={routeFilter.name}
+                    onChange={e => setRouteFilter(prev => ({ ...prev, name: e.target.value }))}
+                  />
+                </div>
+                <div className="flex items-center gap-3 px-4 py-2 bg-slate-50 rounded-2xl border border-slate-100">
+                  <input 
+                    type="checkbox" 
+                    id="activeOnly"
+                    checked={routeFilter.activeOnly}
+                    onChange={e => setRouteFilter(prev => ({ ...prev, activeOnly: e.target.checked }))}
+                    className="w-5 h-5 rounded border-slate-300 text-accent focus:ring-accent"
+                  />
+                  <label htmlFor="activeOnly" className="text-sm font-bold text-slate-600 cursor-pointer">Active Only</label>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead className="bg-slate-50/50 border-b border-slate-100">
+                    <tr className="text-slate-500 text-[10px] font-black uppercase tracking-widest">
+                      <th className="px-6 py-4">Name</th>
+                      <th className="px-6 py-4">Stops</th>
+                      <th className="px-6 py-4">Status</th>
+                      <th className="px-6 py-4 text-right">Actions</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {routes
+                      .filter(r => {
+                        const matchesName = r.name.toLowerCase().includes(routeFilter.name.toLowerCase());
+                        const matchesActive = !routeFilter.activeOnly || r.status === 'active';
+                        return matchesName && matchesActive;
+                      })
+                      .sort((a, b) => a.name.localeCompare(b.name))
+                      .map(route => (
+                        <tr key={route.id} className="hover:bg-slate-50/50 transition-colors">
+                          <td className="px-6 py-4 font-bold text-slate-800">{route.name}</td>
+                          <td className="px-6 py-4">
+                            <div className="flex flex-wrap gap-1">
+                              {route.stops.map((stop, idx) => {
+                                const counterId = typeof stop === 'string' ? stop : stop.counterId;
+                                const counter = counters.find(c => c.id === counterId);
+                                return (
+                                  <span key={idx} className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider">
+                                    {counter?.name || counterId}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className={cn(
+                              "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
+                              route.status === 'active' ? "bg-emerald-50 text-emerald-600" : "bg-slate-100 text-slate-400"
+                            )}>
+                              {route.status || 'active'}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-right space-x-2">
+                            <button onClick={() => { setEditingItem(route); setShowModal(true); }} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
+                              <Edit2 size={18} />
+                            </button>
+                            <button onClick={() => handleDelete('routes', route.id)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors">
+                              <Trash2 size={18} />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
 
@@ -1486,7 +1455,7 @@ export const AdminPanel = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {filteredData(buses).map(bus => (
+                  {filteredData(buses).sort((a, b) => a.regNo.localeCompare(b.regNo)).map(bus => (
                     <tr key={bus.id} className="hover:bg-slate-50/50 transition-colors">
                       <td className="px-6 py-4 font-bold text-slate-800">{bus.regNo}</td>
                       <td className="px-6 py-4">
@@ -1678,7 +1647,7 @@ export const AdminPanel = () => {
                       <AlertCircle size={20} />
                       Danger Zone
                     </h3>
-                    <button className="w-full p-4 bg-white border border-red-100 text-red-600 rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-red-50 transition-all">
+                    <button onClick={handleRevokeSessions} className="w-full p-4 bg-white border border-red-100 text-red-600 rounded-2xl font-black uppercase tracking-widest text-[10px] hover:bg-red-50 transition-all">
                       Revoke All Sessions
                     </button>
                   </div>
@@ -1992,6 +1961,34 @@ export const AdminPanel = () => {
                   })}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {activeTab === 'popupSettings' && (
+            <div className="card space-y-6">
+              <h3 className="text-lg font-bold">Passenger Confirmation Popup</h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="text-xs font-bold text-slate-500">Title</label>
+                  <input 
+                    className="input-field" 
+                    defaultValue="Your ticket will be temporarily booked for 20 minutes"
+                    onBlur={async (e) => {
+                      await setDoc(doc(db, 'settings', 'passengerPopup'), { title: e.target.value }, { merge: true });
+                    }}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-500">Description</label>
+                  <textarea 
+                    className="input-field" 
+                    defaultValue="Complete payment before the booking expires to secure your seat."
+                    onBlur={async (e) => {
+                      await setDoc(doc(db, 'settings', 'passengerPopup'), { description: e.target.value }, { merge: true });
+                    }}
+                  />
+                </div>
+              </div>
             </div>
           )}
         </div>

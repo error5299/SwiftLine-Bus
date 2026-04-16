@@ -275,7 +275,7 @@ export const DriverPanel: React.FC = () => {
       <Login 
         title="Driver Login" 
         onLogin={handleCustomLogin} 
-        error={loginError} 
+        error={loginError}
       />
     );
   }

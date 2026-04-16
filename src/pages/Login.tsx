@@ -1,17 +1,20 @@
 import React, { useState } from 'react';
 import { auth, db } from '../firebase';
-import { signInWithPopup, GoogleAuthProvider, signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
+import { signInWithPopup, GoogleAuthProvider, signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile, sendPasswordResetEmail } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { useLanguage } from '../hooks/useLanguage';
 import { motion, AnimatePresence } from 'motion/react';
-import { Bus, Mail, Lock, LogIn, Chrome, UserPlus, User } from 'lucide-react';
+import { Bus, Mail, Lock as LockIcon, LogIn, Chrome, UserPlus, User } from 'lucide-react';
 
 interface LoginProps {
-  onSuccess: () => void;
+  onSuccess?: () => void;
   defaultRole?: 'admin' | 'operator' | 'supervisor' | 'driver';
+  onLogin?: (id: string, pass: string) => Promise<void>;
+  title?: string;
+  error?: string | null;
 }
 
-export const Login: React.FC<LoginProps> = ({ onSuccess, defaultRole }) => {
+export const Login: React.FC<LoginProps> = ({ onSuccess, defaultRole, onLogin, title, error: externalError }) => {
   const { t } = useLanguage();
   const isStaffLogin = defaultRole === 'operator' || defaultRole === 'supervisor' || defaultRole === 'admin' || defaultRole === 'driver';
   const [isLogin, setIsLogin] = useState(true);
@@ -19,7 +22,7 @@ export const Login: React.FC<LoginProps> = ({ onSuccess, defaultRole }) => {
   const [email, setEmail] = useState('');
   const [customId, setCustomId] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  const [error, setError] = useState(externalError || '');
   const [loading, setLoading] = useState(false);
   const [loginMethod, setLoginMethod] = useState<'email' | 'id'>(isStaffLogin ? 'id' : 'email');
 
@@ -27,9 +30,34 @@ export const Login: React.FC<LoginProps> = ({ onSuccess, defaultRole }) => {
     const provider = new GoogleAuthProvider();
     try {
       await signInWithPopup(auth, provider);
-      onSuccess();
+      onSuccess?.();
     } catch (err: any) {
       setError(err.message);
+    }
+  };
+
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetMessage, setResetMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resetEmail) return;
+    setResetLoading(true);
+    setResetMessage(null);
+    try {
+      await sendPasswordResetEmail(auth, resetEmail);
+      setResetMessage({ type: 'success', text: 'Password reset email sent! Please check your inbox.' });
+      setTimeout(() => {
+        setShowForgotPassword(false);
+        setResetMessage(null);
+        setResetEmail('');
+      }, 3000);
+    } catch (error: any) {
+      setResetMessage({ type: 'error', text: error.message || 'Failed to send reset email.' });
+    } finally {
+      setResetLoading(false);
     }
   };
 
@@ -37,6 +65,19 @@ export const Login: React.FC<LoginProps> = ({ onSuccess, defaultRole }) => {
     e.preventDefault();
     setLoading(true);
     setError('');
+    
+    if (onLogin && loginMethod === 'id') {
+      try {
+        await onLogin(customId, password);
+        onSuccess?.();
+      } catch (err: any) {
+        setError(err.message || 'Login failed');
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
     try {
       if (isLogin) {
         if (loginMethod === 'email') {
@@ -110,7 +151,7 @@ export const Login: React.FC<LoginProps> = ({ onSuccess, defaultRole }) => {
           createdAt: new Date().toISOString()
         });
       }
-      onSuccess();
+      onSuccess?.();
     } catch (err: any) {
       console.error("Login error details:", err);
       if (err.code === 'auth/operation-not-allowed') {
@@ -232,7 +273,7 @@ export const Login: React.FC<LoginProps> = ({ onSuccess, defaultRole }) => {
           <div className="space-y-2">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">{t('পাসওয়ার্ড', 'Password')}</label>
             <div className="relative group">
-              <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-accent transition-colors" size={20} />
+              <LockIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-accent transition-colors" size={20} />
               <input 
                 required
                 type="password" 
@@ -242,6 +283,17 @@ export const Login: React.FC<LoginProps> = ({ onSuccess, defaultRole }) => {
                 onChange={e => setPassword(e.target.value)}
               />
             </div>
+            {isLogin && loginMethod === 'email' && (
+              <div className="flex justify-end px-2">
+                <button 
+                  type="button" 
+                  onClick={() => setShowForgotPassword(true)}
+                  className="text-xs font-bold text-accent hover:underline"
+                >
+                  {t('পাসওয়ার্ড ভুলে গেছেন?', 'Forgot Password?')}
+                </button>
+              </div>
+            )}
           </div>
 
           {error && <p className="text-red-500 text-xs font-bold text-center">{error}</p>}
@@ -283,6 +335,63 @@ export const Login: React.FC<LoginProps> = ({ onSuccess, defaultRole }) => {
           </>
         )}
       </motion.div>
+      {/* Forgot Password Modal */}
+      <AnimatePresence>
+        {showForgotPassword && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white w-full max-w-md rounded-[2.5rem] p-8 shadow-2xl space-y-6"
+            >
+              <div className="text-center space-y-2">
+                <h3 className="text-2xl font-black text-primary">Reset Password</h3>
+                <p className="text-slate-500 text-sm">Enter your email and we'll send you a link to reset your password.</p>
+              </div>
+
+              {resetMessage && (
+                <div className={`p-4 rounded-xl text-sm font-bold ${resetMessage.type === 'success' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
+                  {resetMessage.text}
+                </div>
+              )}
+
+              <form onSubmit={handleForgotPassword} className="space-y-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-2">Email Address</label>
+                  <div className="relative group">
+                    <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-accent transition-colors" size={20} />
+                    <input 
+                      type="email" 
+                      required
+                      placeholder="your@email.com"
+                      className="input-field pl-12"
+                      value={resetEmail}
+                      onChange={(e) => setResetEmail(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div className="flex gap-4 pt-2">
+                  <button 
+                    type="button"
+                    onClick={() => setShowForgotPassword(false)} 
+                    className="flex-1 py-4 bg-slate-100 text-slate-600 font-black uppercase tracking-widest text-xs rounded-2xl"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    type="submit"
+                    disabled={resetLoading}
+                    className="flex-1 py-4 bg-accent text-white font-black uppercase tracking-widest text-xs rounded-2xl shadow-lg shadow-accent/20 disabled:opacity-50"
+                  >
+                    {resetLoading ? 'Sending...' : 'Send Link'}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

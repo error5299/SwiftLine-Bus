@@ -3,6 +3,7 @@ import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, onSnapshot, query, where, updateDoc, doc, getDocs, getDoc, setDoc } from 'firebase/firestore';
 import { Trip, Booking, Passenger, Route, Counter, Crew, Bus } from '../types';
 import { useLanguage } from '../hooks/useLanguage';
+import { useAuth } from '../context/FirebaseProvider';
 import { SeatMap } from '../components/SeatMap';
 import { Users, CheckCircle2, AlertTriangle, Phone, MapPin, Search, QrCode, ShieldAlert, MessageSquare, Clock, Navigation, LogOut, Calendar, ChevronRight, History as HistoryIcon, Activity, LayoutGrid } from 'lucide-react';
 import { format } from 'date-fns';
@@ -85,19 +86,19 @@ export const SupervisorPanel = () => {
 
     const unsubTrips = onSnapshot(collection(db, 'trips'), (snapshot) => {
       setTrips(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Trip)));
-    });
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'trips'));
     const unsubRoutes = onSnapshot(collection(db, 'routes'), (snapshot) => {
       setRoutes(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Route)));
-    });
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'routes'));
     const unsubCounters = onSnapshot(collection(db, 'counters'), (snapshot) => {
       setCounters(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Counter)));
-    });
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'counters'));
     const unsubBuses = onSnapshot(collection(db, 'buses'), (snapshot) => {
       setBuses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Bus)));
-    });
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'buses'));
     const unsubPassengers = onSnapshot(collection(db, 'passengers'), (snapshot) => {
       setPassengers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Passenger)));
-    });
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'passengers'));
 
     return () => {
       unsubscribeAuth();
@@ -143,7 +144,8 @@ export const SupervisorPanel = () => {
       query(collection(db, 'bookings'), where('tripId', '==', selectedTrip.id)),
       (snapshot) => {
         setBookings(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Booking)));
-      }
+      },
+      (err) => handleFirestoreError(err, OperationType.LIST, 'bookings')
     );
     return () => unsubBookings();
   }, [selectedTrip]);
@@ -242,7 +244,7 @@ export const SupervisorPanel = () => {
       <Login 
         title="Supervisor Login" 
         onLogin={handleCustomLogin} 
-        error={loginError} 
+        error={loginError}
       />
     );
   }

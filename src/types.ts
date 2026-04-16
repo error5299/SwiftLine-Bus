@@ -151,6 +151,8 @@ export interface Booking {
   timestamp: any;
   status: 'confirmed' | 'cancelled' | 'booked' | 'sold';
   bookedByCounterId: string;
+  paymentMethod?: string;
+  paymentStatus?: 'pending' | 'completed' | 'failed';
 }
 
 export interface SeatLock {

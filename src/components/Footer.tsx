@@ -1,7 +1,7 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { useLanguage } from '../hooks/useLanguage';
-import { Bus, Facebook, Youtube, Linkedin, Phone, Mail, MapPin, MessageCircle, Download } from 'lucide-react';
+import { Facebook, Youtube, Linkedin, Phone, Mail, MapPin, MessageCircle, Download } from 'lucide-react';
 
 export const Footer = () => {
   const { t } = useLanguage();
@@ -43,10 +43,7 @@ export const Footer = () => {
         {/* Column 1: Brand Story */}
         <div className="col-span-2 space-y-6">
           <div className="flex items-center gap-2">
-            <div className="bg-white p-2 rounded-xl">
-              <Bus className="text-primary" size={24} />
-            </div>
-            <span className="text-2xl font-bold tracking-tighter text-white">SwiftLine</span>
+            <img src="https://www.belayet.pro.bd/wp-content/uploads/2026/03/SL-Logo.png" alt="SwiftLine Logo" className="w-40 h-40 object-contain" referrerPolicy="no-referrer" />
           </div>
           <p className="text-slate-400 max-w-sm leading-relaxed">
             SwiftLine is a premium bus ticketing and fleet management system. We are committed to passenger safety and comfortable travel.

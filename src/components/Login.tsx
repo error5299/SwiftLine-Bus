@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ShieldCheck, User, Lock, AlertCircle } from 'lucide-react';
+import { ShieldCheck, User, Lock as LockIcon, AlertCircle } from 'lucide-react';
 import { useLanguage } from '../hooks/useLanguage';
 
 interface LoginProps {
@@ -50,7 +50,7 @@ export const Login: React.FC<LoginProps> = ({ onLogin, error, title }) => {
           <div className="space-y-2">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-4">Password</label>
             <div className="relative group">
-              <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-accent transition-colors" size={20} />
+              <LockIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-accent transition-colors" size={20} />
               <input
                 type="password"
                 required

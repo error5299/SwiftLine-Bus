@@ -18,7 +18,7 @@ export const AboutUs: React.FC = () => {
       {/* Hero */}
       <section className="relative py-24 px-8 rounded-[2.5rem] overflow-hidden bg-primary text-center">
         <div className="absolute inset-0 opacity-20">
-          <img src="https://picsum.photos/seed/about/1920/1080" alt="About" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+          <img src="https://www.belayet.pro.bd/wp-content/uploads/2026/03/coach_bus_2-scaled.png" alt="About" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
         </div>
         <div className="relative max-w-4xl mx-auto space-y-6">
           <motion.h1 

@@ -192,11 +192,11 @@
 
 @layer components {
   .btn-primary {
-    @apply bg-accent text-white px-6 py-3 rounded-lg font-bold transition-all hover:bg-secondary active:scale-95 shadow-md flex items-center justify-center gap-2;
+    @apply bg-accent text-white px-6 py-3 rounded-xl font-bold transition-all hover:bg-secondary active:scale-95 shadow-md flex items-center justify-center gap-2;
   }
   
   .card-premium {
-    @apply bg-white rounded-xl p-6 shadow-sm border border-slate-100 hover:shadow-lg transition-all duration-300;
+    @apply bg-white rounded-2xl p-6 shadow-sm border border-slate-100 hover:shadow-lg transition-all duration-300;
   }
   
   .glass-header {
@@ -204,7 +204,7 @@
   }
 
   .input-field {
-    @apply w-full px-4 py-3 bg-white border border-slate-200 rounded-lg font-medium text-primary outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent transition-all;
+    @apply w-full px-4 py-3 bg-white border border-slate-200 rounded-xl font-medium text-primary outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent transition-all;
   }
 
   .badge-status {
@@ -228,7 +228,7 @@
   }
 
   .sidebar-item {
-    @apply flex items-center gap-3 px-4 py-3 rounded-lg font-bold text-slate-500 transition-all hover:bg-slate-100 hover:text-primary;
+    @apply flex items-center gap-3 px-4 py-3 rounded-xl font-bold text-slate-500 transition-all hover:bg-slate-100 hover:text-primary;
   }
 
   .sidebar-item-active {

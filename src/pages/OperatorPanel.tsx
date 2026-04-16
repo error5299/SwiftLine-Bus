@@ -4,6 +4,7 @@ import { collection, onSnapshot, addDoc, updateDoc, doc, query, where, getDocs, 
 import { onAuthStateChanged } from 'firebase/auth';
 import { Counter, Trip, Booking, Passenger, SeatLock, Route, Bus, Operator, Crew } from '../types';
 import { useLanguage } from '../hooks/useLanguage';
+import { useAuth } from '../context/FirebaseProvider';
 import { SeatMap } from '../components/SeatMap';
 import { Bus as BusIcon, Search, User, Phone, Mail, Printer, MapPin, Wallet, Clock, CheckCircle2, AlertCircle, Download, CreditCard, LogOut, Users, Calendar, X } from 'lucide-react';
 import { motion } from 'motion/react';
@@ -153,22 +154,22 @@ export const OperatorPanel = () => {
 
     const unsubCounters = onSnapshot(collection(db, 'counters'), (snapshot) => {
       setCounters(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Counter)));
-    });
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'counters'));
     const unsubRoutes = onSnapshot(collection(db, 'routes'), (snapshot) => {
       setRoutes(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Route)));
-    });
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'routes'));
     const unsubBuses = onSnapshot(collection(db, 'buses'), (snapshot) => {
       setBuses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Bus)));
-    });
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'buses'));
     const unsubTrips = onSnapshot(collection(db, 'trips'), (snapshot) => {
       setTrips(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Trip)));
-    });
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'trips'));
     const unsubPassengers = onSnapshot(collection(db, 'passengers'), (snapshot) => {
       setPassengers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Passenger)));
-    });
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'passengers'));
     const unsubCrew = onSnapshot(collection(db, 'crew'), (snapshot) => {
       setCrew(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Crew)));
-    });
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'crew'));
 
     return () => {
       unsubscribeAuth();
@@ -211,7 +212,8 @@ export const OperatorPanel = () => {
       query(collection(db, 'bookings'), where('tripId', '==', selectedTrip.id)),
       (snapshot) => {
         setBookings(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Booking)));
-      }
+      },
+      (err) => handleFirestoreError(err, OperationType.LIST, 'bookings')
     );
     return () => unsubBookings();
   }, [selectedTrip]);
@@ -227,7 +229,8 @@ export const OperatorPanel = () => {
           .filter(lock => new Date(lock.expiresAt) > now)
           .map(lock => lock.seatNumber);
         setLockedSeats(activeLocks);
-      }
+      },
+      (err) => handleFirestoreError(err, OperationType.LIST, 'seatLocks')
     );
     return () => unsubLocks();
   }, [selectedTrip]);

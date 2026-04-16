@@ -1,7 +1,23 @@
 import React, { useState } from 'react';
 import { Counter, RouteStop } from '../types';
-import { Plus, Trash2, ArrowDown, MapPin, Clock, Ruler } from 'lucide-react';
+import { Plus, Trash2, MapPin, Clock, Ruler, GripVertical } from 'lucide-react';
 import { useLanguage } from '../hooks/useLanguage';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+  useSortable,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 interface RouteMapperProps {
   counters: Counter[];
@@ -9,8 +25,96 @@ interface RouteMapperProps {
   onChange: (stops: RouteStop[]) => void;
 }
 
+const SortableStop = ({ stop, index, counters, updateStop, removeStop, t }: any) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+  } = useSortable({ id: index });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} className="relative flex items-start gap-4 animate-in slide-in-from-left-2 duration-300">
+      <div {...attributes} {...listeners} className="z-10 mt-2 bg-white border-2 border-primary w-10 h-10 rounded-full flex items-center justify-center text-xs font-black text-primary shadow-sm cursor-grab">
+        <GripVertical size={16} />
+      </div>
+      
+      <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-100 group hover:border-primary/20 transition-all">
+        <div className="space-y-1">
+          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
+            <MapPin size={10} />
+            {t('কাউন্টার', 'Counter')}
+          </label>
+          <select
+            value={stop.counterId}
+            onChange={(e) => updateStop(index, 'counterId', e.target.value)}
+            className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-primary"
+            required
+          >
+            <option value="">{t('বাছাই করুন', 'Select')}</option>
+            {counters.map(c => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="space-y-1">
+          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
+            <Ruler size={10} />
+            {t('দূরত্ব (কি.মি.)', 'Distance (km)')}
+          </label>
+          <input
+            type="number"
+            value={stop.distance}
+            onChange={(e) => updateStop(index, 'distance', Number(e.target.value))}
+            className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-primary"
+            placeholder="0"
+            min="0"
+          />
+        </div>
+
+        <div className="space-y-1">
+          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
+            <Clock size={10} />
+            {t('সময় (মিনিট)', 'Time (min)')}
+          </label>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              value={stop.travelTime}
+              onChange={(e) => updateStop(index, 'travelTime', Number(e.target.value))}
+              className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-primary"
+              placeholder="0"
+              min="0"
+            />
+            <button
+              type="button"
+              onClick={() => removeStop(index)}
+              className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+            >
+              <Trash2 size={16} />
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export const RouteMapper: React.FC<RouteMapperProps> = ({ counters, stops = [], onChange }) => {
   const { t } = useLanguage();
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
 
   const addStop = () => {
     const newStops = [...stops, { counterId: '', distance: 0, travelTime: 0 }];
@@ -28,6 +132,16 @@ export const RouteMapper: React.FC<RouteMapperProps> = ({ counters, stops = [], 
     onChange(newStops);
   };
 
+  const handleDragEnd = (event: any) => {
+    const { active, over } = event;
+
+    if (active.id !== over.id) {
+      const oldIndex = active.id;
+      const newIndex = over.id;
+      onChange(arrayMove(stops, oldIndex, newIndex));
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -42,80 +156,36 @@ export const RouteMapper: React.FC<RouteMapperProps> = ({ counters, stops = [], 
         </button>
       </div>
 
-      <div className="space-y-4 relative before:absolute before:left-[19px] before:top-8 before:bottom-8 before:w-0.5 before:bg-slate-100">
-        {stops.map((stop, index) => (
-          <div key={index} className="relative flex items-start gap-4 animate-in slide-in-from-left-2 duration-300">
-            <div className="z-10 mt-2 bg-white border-2 border-primary w-10 h-10 rounded-full flex items-center justify-center text-xs font-black text-primary shadow-sm">
-              {index + 1}
-            </div>
-            
-            <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-100 group hover:border-primary/20 transition-all">
-              <div className="space-y-1">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
-                  <MapPin size={10} />
-                  {t('কাউন্টার', 'Counter')}
-                </label>
-                <select
-                  value={stop.counterId}
-                  onChange={(e) => updateStop(index, 'counterId', e.target.value)}
-                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-primary"
-                  required
-                >
-                  <option value="">{t('বাছাই করুন', 'Select')}</option>
-                  {counters.map(c => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
-                  <Ruler size={10} />
-                  {t('দূরত্ব (কি.মি.)', 'Distance (km)')}
-                </label>
-                <input
-                  type="number"
-                  value={stop.distance}
-                  onChange={(e) => updateStop(index, 'distance', Number(e.target.value))}
-                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-primary"
-                  placeholder="0"
-                  min="0"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
-                  <Clock size={10} />
-                  {t('সময় (মিনিট)', 'Time (min)')}
-                </label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    value={stop.travelTime}
-                    onChange={(e) => updateStop(index, 'travelTime', Number(e.target.value))}
-                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-primary"
-                    placeholder="0"
-                    min="0"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => removeStop(index)}
-                    className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
-              </div>
-            </div>
+      <DndContext 
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragEnd={handleDragEnd}
+      >
+        <SortableContext 
+          items={stops.map((_, index) => index)}
+          strategy={verticalListSortingStrategy}
+        >
+          <div className="space-y-4 relative before:absolute before:left-[19px] before:top-8 before:bottom-8 before:w-0.5 before:bg-slate-100">
+            {stops.map((stop, index) => (
+              <SortableStop 
+                key={index} 
+                index={index} 
+                stop={stop} 
+                counters={counters} 
+                updateStop={updateStop} 
+                removeStop={removeStop} 
+                t={t} 
+              />
+            ))}
           </div>
-        ))}
+        </SortableContext>
+      </DndContext>
 
-        {stops.length === 0 && (
-          <div className="text-center py-8 border-2 border-dashed border-slate-100 rounded-2xl">
-            <p className="text-sm text-slate-400">{t('কোনো স্টপ যোগ করা হয়নি', 'No stops added yet')}</p>
-          </div>
-        )}
-      </div>
+      {stops.length === 0 && (
+        <div className="text-center py-8 border-2 border-dashed border-slate-100 rounded-2xl">
+          <p className="text-sm text-slate-400">{t('কোনো স্টপ যোগ করা হয়নি', 'No stops added yet')}</p>
+        </div>
+      )}
     </div>
   );
 };
