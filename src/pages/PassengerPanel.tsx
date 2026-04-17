@@ -5,6 +5,7 @@ import { Trip, Route, Bus, Booking, Passenger, Counter, TripCounterTime } from '
 import { cn } from '../lib/utils';
 import { useLanguage } from '../hooks/useLanguage';
 import { useFirebaseData } from '../context/FirebaseProvider';
+import { useNotification } from '../context/NotificationContext';
 
 import { SeatMap } from '../components/SeatMap';
 import { 
@@ -13,7 +14,8 @@ import {
   Wifi, Coffee, Zap, Info, ArrowLeftRight, LocateFixed, Star,
   Filter, Sun, Moon, CloudSun, CreditCard, Ticket, X,
   Plus, Edit2, Trash2, UserCheck, Users, User, Smartphone, Wallet, Globe, AlertCircle,
-  ChevronDown, ChevronUp, Printer, Phone, Mail, Map, ShieldCheck, Shield, Check, Lock as LockIcon
+  ChevronDown, ChevronUp, Printer, Phone, Mail, Map, ShieldCheck, Shield, Check, Lock as LockIcon,
+  Bell, MessageSquare, LifeBuoy, ThumbsUp, Star as StarIcon
 } from 'lucide-react';
 import { format, addDays, isSameDay, parseISO } from 'date-fns';
 import { formatInTimeZone } from 'date-fns-tz';
@@ -29,6 +31,17 @@ interface PassengerPanelProps {
 export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking }) => {
   const { t } = useLanguage();
   const data = useFirebaseData();
+  const { addNotification } = useNotification();
+  
+  // New States for requested features
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+  const [showPolicyModal, setShowPolicyModal] = useState(false);
+  const [feedbackRating, setFeedbackRating] = useState(0);
+  const [feedbackSuggestion, setFeedbackSuggestion] = useState('');
+  const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
+  const [readNotifications, setReadNotifications] = useState<string[]>([]);
+
   const trips = data.trips || [];
   const routes = data.routes || [];
   const buses = data.buses || [];
@@ -68,6 +81,36 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
   const [availableDestinations, setAvailableDestinations] = useState<Counter[]>([]);
   const [hasSearched, setHasSearched] = useState(false);
   const resultsRef = useRef<HTMLDivElement>(null);
+  const seenNotifIds = useRef<string[]>([]);
+
+  // Auto-fill seenNotifIds on load to avoid popping up old notifications
+  useEffect(() => {
+    if (data.notifications) {
+      seenNotifIds.current = data.notifications.map((n: any) => n.id);
+    }
+  }, []);
+
+  // Real-time Notification Popups
+  useEffect(() => {
+    if (!auth.currentUser || !data.notifications) return;
+
+    const sorted = [...data.notifications].sort((a, b) => 
+      new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    );
+
+    const latest = sorted[0];
+    if (latest && !seenNotifIds.current.includes(latest.id)) {
+      // Check if it's very recent (within 10 seconds)
+      const isRecent = Date.now() - new Date(latest.timestamp).getTime() < 10000;
+      if (isRecent) {
+        addNotification(`${latest.title}: ${latest.message}`, 
+          latest.type === 'cancellation' ? 'error' : 
+          latest.type === 'delay' ? 'info' : 'success'
+        );
+      }
+      seenNotifIds.current.push(latest.id);
+    }
+  }, [data.notifications, addNotification]);
 
   useEffect(() => {
     sessionStorage.setItem('targetSearch', JSON.stringify(searchParams));
@@ -97,6 +140,7 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
   const [selectedSeats, setSelectedSeats] = useState<string[]>([]);
   const [bookingFor, setBookingFor] = useState<'self' | 'others'>('self');
   const [passengerData, setPassengerData] = useState({ name: '', phone: '', email: '', gender: 'male' as 'male' | 'female' });
+  const [bookingError, setBookingError] = useState<string | null>(null);
 
   // Auto-fill passenger data if booking for self and user is logged in
   useEffect(() => {
@@ -113,33 +157,36 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
   }, [bookingFor]);
   const [isReturning, setIsReturning] = useState(false);
   const [bookingSuccess, setBookingSuccess] = useState<Booking | null>(null);
-  const [showConfirmationModal, setShowConfirmationModal] = useState(false);
-  const [popupSettings, setPopupSettings] = useState({ title: 'Your ticket will be temporarily booked for 20 minutes', description: 'Complete payment before the booking expires to secure your seat.' });
-
-  useEffect(() => {
-    const unsub = onSnapshot(doc(db, 'settings', 'passengerPopup'), (doc) => {
-      if (doc.exists()) {
-        setPopupSettings(doc.data() as any);
-      }
-    }, (err) => {
-      handleFirestoreError(err, OperationType.GET, 'settings/passengerPopup');
-    });
-    return () => unsub();
-  }, []);
 
   const [paymentMethod, setPaymentMethod] = useState('bKash');
   const [couponCode, setCouponCode] = useState('');
-  const [termsAccepted, setTermsAccepted] = useState(false);
+  const [termsAccepted, setTermsAccepted] = useState(true);
   const sessionId = useRef(Math.random().toString(36).substring(2, 15)).current;
 
   useEffect(() => {
     if (expandedTripId) {
       const trip = searchResults.find(t => t.id === expandedTripId);
       setSelectedTrip(trip || null);
+      
+      if (trip) {
+        const route = routes.find(r => r.id === trip.routeId);
+        if (route && route.orderedCounterList && route.orderedCounterList.length > 0) {
+          // Default boarding to either searched 'from' (if valid for this route) or first counter
+          const fromIdx = route.orderedCounterList.indexOf(searchParams.from);
+          setSelectedBoarding(fromIdx !== -1 ? searchParams.from : route.orderedCounterList[0]);
+          
+          // Default dropping to last counter per user request
+          setSelectedDropping(route.orderedCounterList[route.orderedCounterList.length - 1]);
+        }
+      }
     } else {
       setSelectedTrip(null);
+      setBookingStep(1);
+      setSelectedSeats([]);
+      setSelectedBoarding('');
+      setSelectedDropping('');
     }
-  }, [expandedTripId, searchResults]);
+  }, [expandedTripId, searchResults, routes, searchParams.from]);
   const [trackingTripId, setTrackingTripId] = useState<string | null>(null);
   const [trackCoachNumber, setTrackCoachNumber] = useState('');
   const [trackTicketId, setTrackTicketId] = useState('');
@@ -225,12 +272,12 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
       const route = currentRoutes.find((r: Route) => r.id === trip.routeId);
       const bus = currentBuses.find((b: Bus) => b.id === trip.busId);
       
-      if (!trip.departureTime) {
-        console.warn("Trip missing departureTime:", trip);
+      if (!trip.departureTime || isNaN(new Date(trip.departureTime).getTime())) {
+        console.warn("Trip invalid departureTime:", trip);
         return false;
       }
       
-      const tripDate = formatInTimeZone(new Date(trip.departureTime), TZ, 'yyyy-MM-dd');
+      const tripDateStr = formatInTimeZone(new Date(trip.departureTime), TZ, 'yyyy-MM-dd');
       const tripHour = parseInt(formatInTimeZone(new Date(trip.departureTime), TZ, 'HH'));
       
       let matchesTime = true;
@@ -253,7 +300,7 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
         correctOrder = fromIndex !== -1 && toIndex !== -1 && fromIndex < toIndex;
       }
 
-      const isDateMatch = tripDate === searchParams.date;
+      const isDateMatch = tripDateStr === searchParams.date;
       const isFuture = new Date(trip.departureTime) > new Date();
       
       return isDateMatch && 
@@ -287,9 +334,33 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
     return `SL-${numbers}${letters}`;
   };
 
+  const handleFeedbackSubmit = async () => {
+    if (feedbackRating === 0) {
+      addNotification('Please select a rating', 'info');
+      return;
+    }
+    setIsSubmittingFeedback(true);
+    try {
+      await addDoc(collection(db, 'feedback'), {
+        rating: feedbackRating,
+        suggestion: feedbackSuggestion,
+        timestamp: new Date().toISOString(),
+        passengerId: auth.currentUser?.uid || 'anonymous'
+      });
+      setShowFeedbackModal(false);
+      setFeedbackRating(0);
+      setFeedbackSuggestion('');
+      addNotification('Thank you for your feedback!', 'success');
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, 'feedback');
+    } finally {
+      setIsSubmittingFeedback(false);
+    }
+  };
+
   const handleBooking = async () => {
     if (!selectedTrip || selectedSeats.length === 0 || !passengerData.name || !passengerData.phone || !selectedBoarding || !selectedDropping) {
-      alert('Please fill all required fields');
+      addNotification('Please fill all required fields', 'error');
       return;
     }
 
@@ -303,7 +374,6 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
       
       if (isBooked) {
         alert('One or more selected seats have already been booked by someone else. Please select different seats.');
-        setShowConfirmationModal(false);
         setLoading(false);
         return;
       }
@@ -358,7 +428,13 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
       setSelectedSeats([]);
       setBookingStep(1);
     } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, 'bookings');
+      console.error(err);
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      if (errorMessage.includes('Missing or insufficient permissions')) {
+         setBookingError('Permission Denied! Are you logged in as a valid user?');
+      } else {
+         setBookingError(`Booking failed: ${errorMessage}`);
+      }
     } finally {
       setLoading(false);
     }
@@ -501,7 +577,7 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                     </span>
                     {log ? (
                       <span className="text-[10px] text-slate-400 font-black uppercase tracking-widest mt-1">
-                        Passed <span className="font-num text-primary">{log.timestamp ? format(new Date(log.timestamp), 'hh:mm a') : 'N/A'}</span>
+                        Passed <span className="font-num text-primary">{log.timestamp ? safeFormat(log.timestamp, 'hh:mm a') : 'N/A'}</span>
                       </span>
                     ) : isCurrent ? (
                       <span className="text-[10px] text-accent font-black uppercase tracking-widest mt-1 animate-pulse">
@@ -539,6 +615,25 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
   return (
     <div className="min-h-screen w-full bg-[#DEF2F1] selection:bg-accent selection:text-white font-sans">
       <div className="fixed inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(58,175,169,0.1)_0%,transparent_70%)] pointer-events-none" />
+      
+      {/* Floating Action Buttons for Policy & Feedback */}
+      <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3">
+        <button 
+          onClick={() => setShowPolicyModal(true)}
+          className="w-12 h-12 bg-white text-primary rounded-full shadow-2xl flex items-center justify-center hover:scale-110 active:scale-95 transition-all border border-slate-100 group"
+          title="Cancellation Policy"
+        >
+          <ShieldCheck size={20} className="group-hover:text-accent transition-colors" />
+        </button>
+        <button 
+          onClick={() => setShowFeedbackModal(true)}
+          className="w-12 h-12 bg-accent text-white rounded-full shadow-2xl flex items-center justify-center hover:scale-110 active:scale-95 transition-all group"
+          title="Give Feedback"
+        >
+          <MessageSquare size={20} />
+        </button>
+      </div>
+
       <style>{`
         .glass-card {
           background: rgba(255, 255, 255, 0.7);
@@ -621,12 +716,12 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                 </label>
                 <div className="w-full pl-12 pr-6 py-4 bg-slate-50 border-none rounded-[1.5rem] flex items-center cursor-pointer relative focus-within:ring-2 focus-within:ring-accent/20 transition-all">
                   <span className="font-black text-base text-primary whitespace-nowrap">
-                    {searchParams.date ? (isNaN(Date.parse(searchParams.date)) ? 'Invalid Date' : format(new Date(searchParams.date), 'dd-MM-yyyy')) : 'Select Date'}
+                    {searchParams.date ? safeFormat(searchParams.date, 'dd-MM-yyyy') : 'Select Date'}
                   </span>
                   <input 
                     id="date-input"
                     type="date" 
-                    min={format(new Date(), 'yyyy-MM-dd')}
+                    min={safeFormat(new Date(), 'yyyy-MM-dd')}
                     className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
                     value={searchParams.date}
                     onClick={(e) => {
@@ -927,84 +1022,118 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                   const route = routes.find(r => r.id === trip.routeId);
                   const bus = buses.find(b => b.id === trip.busId);
                   const tripDate = new Date(trip.departureTime);
+                  const isValidTripDate = !isNaN(tripDate.getTime());
                   
+                  // Boarding point: User requested to show first counter of the route for the summary card
+                  const boardingId = route?.orderedCounterList?.[0] || '';
+                  // Dropping point: User requested to show last counter of the route for the summary card
+                  const droppingId = route?.orderedCounterList?.[route.orderedCounterList.length - 1] || '';
+                  
+                  const boardingTimeData = tripCounterTimes.find(t => t.tripId === trip.id && t.counterId === boardingId);
+                  const droppingTimeData = tripCounterTimes.find(t => t.tripId === trip.id && t.counterId === droppingId);
+                  
+                  const boardingCounter = counters.find(c => c.id === boardingId);
+                  const droppingCounter = counters.find(c => c.id === droppingId);
+
                   return (
                     <motion.div 
                       key={trip.id} 
                       layout
-                      className="bg-white rounded-[2.5rem] p-8 shadow-sm hover:shadow-xl transition-all duration-500 border border-slate-50 group"
+                      className="w-full max-w-full bg-white rounded-3xl p-4 sm:p-6 shadow-sm hover:shadow-md transition-all duration-300 border border-slate-100 group flex flex-col relative overflow-hidden"
                     >
-                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-8 relative">
-                        
-                        <div className="flex items-center gap-8">
-                          <div className="flex flex-col items-center justify-center bg-slate-50 p-5 rounded-[1.5rem] min-w-[80px] border border-slate-100 group-hover:bg-accent/5 transition-colors">
-                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-1">{formatInTimeZone(tripDate, TZ, 'MMM')}</span>
-                            <span className="text-2xl font-black text-primary font-num leading-none">{formatInTimeZone(tripDate, TZ, 'dd')}</span>
+                      <div className="absolute top-0 left-0 w-1.5 h-full bg-accent opacity-0 group-hover:opacity-100 transition-opacity" />
+                      
+                      <div className="flex flex-col md:flex-row gap-4 md:gap-6">
+                        {/* Left: Time & Locations */}
+                        <div className="flex-[2] flex flex-col gap-4">
+                          <div className="flex items-center gap-2">
+                            <span className="px-2 py-0.5 bg-slate-50 text-slate-500 rounded-md text-[9px] font-bold uppercase tracking-wider border border-slate-100 shrink-0">{bus?.isAC ? 'AC' : 'Non-AC'}</span>
+                            <span className="px-2 py-0.5 bg-blue-50 text-blue-600 rounded-md text-[9px] font-bold uppercase tracking-wider border border-blue-100 shrink-0">{bus?.model}</span>
+                            <div className="flex items-center gap-1.5 px-2 py-0.5 bg-primary/5 text-primary rounded-md text-[9px] font-bold uppercase tracking-wider border border-primary/10 shrink-0">
+                              <MapIcon size={10} />
+                              {route?.name}
+                            </div>
                           </div>
                           
-                          <div className="space-y-3">
-                            <div className="flex items-center gap-4">
-                              <h3 className="text-xl font-black text-primary tracking-tight group-hover:text-accent transition-colors">{route?.name}</h3>
-                              <div className="flex items-center gap-1.5 bg-amber-50 text-amber-600 px-3 py-1 rounded-full text-xs font-black border border-amber-100">
-                                <Star size={12} fill="currentColor" /> <span className="font-num">4.9</span>
-                              </div>
-                            </div>
-                            
-                            <div className="flex flex-wrap items-center gap-4 text-sm text-slate-500 font-bold">
-                              <div className="flex items-center gap-2 bg-slate-50 px-4 py-2 rounded-full">
-                                <Clock size={16} className="text-accent" /> 
-                                <span className="text-primary font-black">
-                                  {(() => {
-                                    const counterTime = tripCounterTimes.find(t => t.tripId === trip.id && t.counterId === selectedBoarding);
-                                    return counterTime ? format(parseISO(counterTime.departureTime), 'hh:mm a') : formatInTimeZone(tripDate, TZ, 'hh:mm a');
-                                  })()}
-                                </span>
-                              </div>
-                              
-                              <div className="flex items-center gap-2 bg-slate-50 px-4 py-2 rounded-full">
-                                <BusIcon size={16} className="text-accent" /> 
-                                <span className="text-primary font-black">{bus?.isAC ? 'AC' : 'Non-AC'}</span>
-                              </div>
+                          <div className="flex items-center justify-between gap-4">
+                            <div className="flex flex-col">
+                               <p className="text-xl sm:text-2xl font-black text-primary font-num leading-none">
+                                 {boardingTimeData ? safeFormat(boardingTimeData.departureTime, 'hh:mm') : (isValidTripDate ? formatInTimeZone(tripDate, TZ, 'hh:mm') : '--:--')}
+                               </p>
+                               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter mt-1">
+                                 {boardingTimeData ? safeFormat(boardingTimeData.departureTime, 'a') : (isValidTripDate ? formatInTimeZone(tripDate, TZ, 'a') : 'AM')}
+                               </p>
+                               <p className="text-[11px] font-bold text-slate-700 truncate mt-2 max-w-[80px] sm:max-w-[120px]">{boardingCounter?.name || route?.name?.split(' - ')[0] || 'Origin'}</p>
+                             </div>
 
-                              <div className="flex items-center gap-2 bg-slate-50 px-4 py-2 rounded-full">
-                                <Users size={16} className="text-accent" /> 
-                                <span className="text-primary font-black font-num">{bus?.capacity} Seats</span>
+                            <div className="flex-1 flex flex-col items-center gap-1">
+                              <div className="w-full flex items-center gap-1">
+                                <div className="w-1.5 h-1.5 rounded-full border border-accent bg-white shrink-0" />
+                                <div className="flex-1 h-[1px] border-t border-dashed border-slate-300" />
+                                <BusIcon size={14} className="text-slate-300 mx-1 shrink-0" />
+                                <div className="flex-1 h-[1px] border-t border-dashed border-slate-300" />
+                                <div className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" />
                               </div>
-                              
-                              {trip.coachNumber && (
-                                <span className="bg-primary text-white px-4 py-2 rounded-full text-[10px] font-black tracking-[0.2em] uppercase">
-                                  Coach: {trip.coachNumber}
-                                </span>
-                              )}
+                              <span className="text-[9px] font-medium text-slate-400 uppercase tracking-widest whitespace-nowrap">Direct Trip</span>
+                            </div>
+
+                            <div className="flex flex-col items-end">
+                              <p className="text-xl sm:text-2xl font-black text-primary font-num leading-none">
+                                {droppingTimeData ? safeFormat(droppingTimeData.arrivalTime, 'hh:mm') : '--:--'}
+                              </p>
+                              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter mt-1">
+                                {droppingTimeData ? safeFormat(droppingTimeData.arrivalTime, 'a') : 'PM'}
+                              </p>
+                              <p className="text-[11px] font-bold text-slate-700 truncate mt-2 max-w-[80px] sm:max-w-[120px]">{droppingCounter?.name || route?.name?.split(' - ')[1] || 'Destination'}</p>
                             </div>
                           </div>
                         </div>
-                        
-                        <div className="flex items-center justify-between md:flex-col md:items-end gap-4 border-t md:border-t-0 pt-6 md:pt-0 border-slate-50">
+
+                        {/* Divider Mobile */}
+                        <div className="md:hidden w-full h-px bg-slate-50" />
+                        <div className="hidden md:block w-px bg-slate-100 self-stretch" />
+
+                        {/* Right: Booking Action */}
+                        <div className="flex flex-row md:flex-col items-center md:items-end justify-between md:justify-center gap-4 shrink-0">
                           <div className="text-left md:text-right">
-                            <p className="text-[10px] text-slate-400 uppercase font-black tracking-[0.2em]">Per Person</p>
-                            <p className="text-2xl font-black text-primary tracking-tighter"><span className="font-num">৳ {trip.fare || 500}</span></p>
+                            <p className="text-[9px] text-slate-400 uppercase font-black tracking-widest mb-0.5">Seat Fare</p>
+                            <p className="text-2xl sm:text-3xl font-black text-accent tracking-tighter leading-none"><span className="font-num">৳ {trip.fare || 500}</span></p>
                           </div>
                           <button 
-                            onClick={() => setExpandedTripId(expandedTripId === trip.id ? null : trip.id)}
-                            className={`px-8 py-4 rounded-[1.5rem] text-sm font-black transition-all flex items-center gap-3 shadow-lg active:scale-95 ${
+                            onClick={(e) => {
+                              setExpandedTripId(expandedTripId === trip.id ? null : trip.id);
+                              if (expandedTripId !== trip.id) {
+                                setTimeout(() => {
+                                  const el = document.getElementById(`expanded-${trip.id}`);
+                                  if (el) {
+                                    const yOffset = -80; 
+                                    const y = el.getBoundingClientRect().top + window.pageYOffset + yOffset;
+                                    window.scrollTo({ top: y, behavior: 'smooth' });
+                                  }
+                                }, 300);
+                              }
+                            }}
+                            className={cn(
+                              "w-auto px-5 sm:px-10 py-3 sm:py-4 rounded-xl text-[11px] sm:text-xs font-black uppercase tracking-[0.1em] transition-all flex items-center justify-center gap-2 shadow-sm active:scale-95",
                               expandedTripId === trip.id 
-                                ? 'bg-slate-900 text-white hover:bg-black' 
-                                : 'bg-accent text-white hover:bg-accent/90 hover:shadow-accent/40'
-                            }`}
+                                ? "bg-slate-900 text-white" 
+                                : "bg-accent text-white hover:bg-accent/90 shadow-lg shadow-accent/10"
+                            )}
                           >
-                            {expandedTripId === trip.id ? 'Close' : 'Book Seats'}
-                            {expandedTripId === trip.id ? <X size={18} /> : <ChevronRight size={18} />}
+                            {expandedTripId === trip.id ? 'Close' : 'Select Seat'}
+                            {expandedTripId === trip.id ? <X size={14} /> : <ChevronRight size={14} />}
                           </button>
                         </div>
                       </div>
+                      
+                      <div id={`expanded-${trip.id}`} className="w-full">
                       <AnimatePresence>
                         {expandedTripId === trip.id && (
                           <motion.div 
                             initial={{ height: 0, opacity: 0 }}
                             animate={{ height: 'auto', opacity: 1 }}
                             exit={{ height: 0, opacity: 0 }}
-                            className="overflow-hidden"
+                            className="w-full bg-slate-50/30"
                           >
                             <div className="pt-8 mt-8 border-t border-slate-50 space-y-8">
                               {/* Progress Indicator */}
@@ -1057,7 +1186,7 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                                     className="space-y-4 pb-24 lg:pb-0"
                                   >
                                     {/* Legend */}
-                                    <div className="flex flex-wrap items-center justify-center gap-8 bg-white p-6 rounded-[1.5rem] border border-slate-50 shadow-sm">
+                                    <div className="flex flex-wrap items-center justify-center gap-4 sm:gap-6 bg-white p-4 sm:p-5 rounded-2xl border border-slate-50 shadow-sm">
                                       {[
                                         { label: 'Booked (M)', color: 'bg-slate-400' },
                                         { label: 'Booked (F)', color: 'bg-female' },
@@ -1066,15 +1195,15 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                                         { label: 'Sold (M)', color: 'bg-red-500' },
                                         { label: 'Sold (F)', color: 'bg-pink-400' },
                                       ].map((item) => (
-                                        <div key={item.label} className="flex items-center gap-3">
-                                          <div className={`w-5 h-5 rounded-md ${item.color}`} />
-                                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">{item.label}</span>
+                                        <div key={item.label} className="flex items-center gap-2">
+                                          <div className={`w-4 h-4 sm:w-5 sm:h-5 rounded-md ${item.color}`} />
+                                          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{item.label}</span>
                                         </div>
                                       ))}
                                     </div>
 
-                                    <div className="grid lg:grid-cols-2 gap-8 items-start">
-                                      <div className="bg-white p-6 md:p-10 rounded-[2.5rem] border border-slate-50 shadow-sm relative overflow-hidden">
+                                    <div className="grid lg:grid-cols-2 gap-6 sm:gap-8 items-start">
+                                      <div className="bg-white p-4 sm:p-8 rounded-3xl border border-slate-50 shadow-sm relative overflow-x-auto">
                                         <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(circle_at_50%_0%,rgba(58,175,169,0.03)_0%,transparent_70%)] pointer-events-none" />
                                         <SeatMap
                                           capacity={buses.find(b => b.id === trip?.busId)?.capacity || 40}
@@ -1116,37 +1245,37 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                                       </div>
 
                                       <div className="space-y-6">
-                                        <div className="bg-white p-8 rounded-[2.5rem] border border-slate-50 shadow-sm space-y-8">
-                                          <h3 className="text-xl font-black text-primary tracking-tight">Selected Seats</h3>
+                                        <div className="bg-white p-5 sm:p-8 rounded-3xl border border-slate-50 shadow-sm space-y-6 sm:space-y-8">
+                                          <h3 className="text-lg sm:text-xl font-bold text-primary tracking-tight">Selected Seats</h3>
                                           {selectedSeats.length > 0 ? (
-                                            <div className="space-y-8">
-                                              <div className="flex flex-wrap gap-4">
+                                            <div className="space-y-6 sm:space-y-8">
+                                              <div className="flex flex-wrap gap-2 sm:gap-4">
                                                 {selectedSeats.map(seat => (
-                                                  <span key={seat} className="px-6 py-3 bg-accent text-white font-black rounded-full shadow-lg animate-in zoom-in duration-300 text-sm tracking-tighter">
+                                                  <span key={seat} className="px-4 border border-accent/20 sm:px-6 py-2 sm:py-3 bg-accent text-white font-bold rounded-full shadow-sm animate-in zoom-in duration-300 text-xs sm:text-sm tracking-widest">
                                                     {seat}
                                                   </span>
                                                 ))}
                                               </div>
-                                              <div className="p-6 bg-slate-50 rounded-[1.5rem] space-y-4 border border-slate-100">
-                                                <div className="flex justify-between text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">
+                                              <div className="p-4 sm:p-6 bg-slate-50 rounded-2xl space-y-3 sm:space-y-4 border border-slate-100">
+                                                <div className="flex justify-between text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-widest">
                                                   <span>Seat Fare ({selectedSeats.length}x)</span>
                                                   <span className="text-primary font-num">৳ {selectedSeats.length * (trip.fare || 500)}</span>
                                                 </div>
-                                                <div className="flex justify-between text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">
+                                                <div className="flex justify-between text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-widest">
                                                   <span>Processing Fee</span>
                                                   <span className="text-emerald-500">FREE</span>
                                                 </div>
-                                                <div className="pt-6 border-t border-slate-200 flex justify-between items-end">
-                                                  <span className="text-xs font-black text-primary uppercase tracking-[0.2em]">Total</span>
-                                                  <span className="text-3xl font-black text-accent font-num tracking-tighter leading-none">৳ {selectedSeats.length * (trip.fare || 500)}</span>
+                                                <div className="pt-4 sm:pt-6 border-t border-slate-200 flex justify-between items-end">
+                                                  <span className="text-xs sm:text-sm font-bold text-primary uppercase tracking-widest">Total</span>
+                                                  <span className="text-2xl sm:text-3xl font-bold text-accent font-num tracking-tighter leading-none">৳ {selectedSeats.length * (trip.fare || 500)}</span>
                                                 </div>
                                               </div>
                                               <button 
                                                 onClick={() => setBookingStep(2)}
-                                                className="w-full py-5 bg-accent text-white font-black rounded-[1.5rem] shadow-xl shadow-accent/30 hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-3 text-lg"
+                                                className="w-full py-4 text-sm sm:text-base sm:py-5 bg-accent text-white font-bold rounded-2xl shadow-lg shadow-accent/20 hover:scale-[1.01] active:scale-95 transition-all flex items-center justify-center gap-2"
                                               >
                                                 Continue to Details
-                                                <ChevronRight size={22} />
+                                                <ChevronRight size={20} />
                                               </button>
                                             </div>
                                           ) : (
@@ -1173,21 +1302,21 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                                   >
                                                               {/* Passenger Details Card */}
                                     <div className="space-y-6">
-                                      <div className="bg-white p-8 rounded-[2.5rem] border border-slate-50 shadow-sm space-y-8">
+                                      <div className="bg-white p-5 sm:p-8 rounded-3xl border border-slate-50 shadow-sm space-y-6 sm:space-y-8">
                                         <div className="flex items-center justify-between">
-                                          <h3 className="text-xl font-black text-primary tracking-tight flex items-center gap-4">
-                                            <UserCheck className="text-accent" size={24} />
+                                          <h3 className="text-lg sm:text-xl font-bold text-primary tracking-tight flex items-center gap-3">
+                                            <UserCheck className="text-accent" size={20} />
                                             Passenger Details
                                           </h3>
-                                          <div className="flex bg-slate-50 p-1.5 rounded-full border border-slate-100">
+                                          <div className="flex bg-slate-50 p-1 rounded-full border border-slate-100">
                                             {(['self', 'others'] as const).map(type => (
                                               <button
                                                 key={type}
                                                 onClick={() => setBookingFor(type)}
                                                 className={cn(
-                                                  "px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-[0.2em] transition-all duration-500",
+                                                  "px-4 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest transition-all duration-300",
                                                   bookingFor === type 
-                                                    ? "bg-white text-accent shadow-md scale-105" 
+                                                    ? "bg-white text-accent shadow-sm scale-100" 
                                                     : "text-slate-400 hover:text-slate-600"
                                                 )}
                                               >
@@ -1198,29 +1327,29 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                                         </div>
                                         
                                         <div className="space-y-8">
-                                          <div className="grid grid-cols-2 gap-8">
-                                            <div className="space-y-3">
-                                              <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] ml-4">Full Name*</label>
+                                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
+                                            <div className="space-y-2">
+                                              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest sm:ml-4 ml-2">Mobile Number*</label>
                                               <input 
-                                                type="text"
-                                                placeholder="Enter your name" 
-                                                className="w-full px-6 py-5 bg-slate-50 border-none rounded-[1.5rem] font-black text-primary outline-none focus:ring-2 focus:ring-accent/20 focus:bg-white transition-all placeholder:text-slate-300 text-base"
-                                                value={passengerData.name}
-                                                onChange={e => setPassengerData({ ...passengerData, name: e.target.value })}
+                                                type="tel"
+                                                placeholder="+8801XXXXXXXXX" 
+                                                className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl font-medium text-slate-700 outline-none focus:ring-2 focus:ring-accent/20 focus:bg-white transition-all placeholder:text-slate-400 text-sm"
+                                                value={passengerData.phone}
+                                                onChange={e => setPassengerData({ ...passengerData, phone: e.target.value })}
                                               />
                                             </div>
-                                            <div className="space-y-3">
-                                              <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] ml-4">Gender*</label>
-                                              <div className="flex gap-4">
+                                            <div className="space-y-2">
+                                              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest sm:ml-4 ml-2">Gender*</label>
+                                              <div className="flex gap-3">
                                                 {['male', 'female'].map(g => (
                                                   <button
                                                     key={g}
                                                     onClick={() => setPassengerData({ ...passengerData, gender: g as any })}
                                                     className={cn(
-                                                      "flex-1 py-5 rounded-[1.5rem] font-black uppercase tracking-[0.2em] text-[10px] transition-all duration-500",
+                                                      "flex-1 py-3 rounded-2xl font-bold uppercase tracking-widest text-[10px] sm:text-xs transition-all duration-300",
                                                       passengerData.gender === g 
-                                                        ? "bg-primary text-white shadow-xl scale-105" 
-                                                        : "bg-slate-50 text-slate-400 hover:bg-slate-100"
+                                                        ? "bg-primary text-white shadow-md scale-100 sm:scale-105" 
+                                                        : "bg-slate-50 border border-slate-100 text-slate-500 hover:bg-slate-100"
                                                     )}
                                                   >
                                                     {g}
@@ -1230,23 +1359,23 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                                             </div>
                                           </div>
                                           
-                                          <div className="grid grid-cols-2 gap-8">
-                                            <div className="space-y-3">
-                                              <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] ml-4">Mobile Number*</label>
+                                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
+                                            <div className="space-y-2">
+                                              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest sm:ml-4 ml-2">Full Name*</label>
                                               <input 
-                                                type="tel"
-                                                placeholder="+8801XXXXXXXXX" 
-                                                className="w-full px-6 py-5 bg-slate-50 border-none rounded-[1.5rem] font-black text-primary outline-none focus:ring-2 focus:ring-accent/20 focus:bg-white transition-all placeholder:text-slate-300 text-base"
-                                                value={passengerData.phone}
-                                                onChange={e => setPassengerData({ ...passengerData, phone: e.target.value })}
+                                                type="text"
+                                                placeholder="Enter your name" 
+                                                className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl font-medium text-slate-700 outline-none focus:ring-2 focus:ring-accent/20 focus:bg-white transition-all placeholder:text-slate-400 text-sm"
+                                                value={passengerData.name}
+                                                onChange={e => setPassengerData({ ...passengerData, name: e.target.value })}
                                               />
                                             </div>
-                                            <div className="space-y-3">
-                                              <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] ml-4">Email Address</label>
+                                            <div className="space-y-2">
+                                              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest sm:ml-4 ml-2">Email Address</label>
                                               <input 
                                                 type="email"
                                                 placeholder="example@mail.com" 
-                                                className="w-full px-6 py-5 bg-slate-50 border-none rounded-[1.5rem] font-black text-primary outline-none focus:ring-2 focus:ring-accent/20 focus:bg-white transition-all placeholder:text-slate-300 text-base"
+                                                className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl font-medium text-slate-700 outline-none focus:ring-2 focus:ring-accent/20 focus:bg-white transition-all placeholder:text-slate-400 text-sm"
                                                 value={passengerData.email}
                                                 onChange={e => setPassengerData({ ...passengerData, email: e.target.value })}
                                               />
@@ -1255,18 +1384,18 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                                         </div>
                                       </div>
                                       
-                                      <div className="bg-white p-8 rounded-[2.5rem] border border-slate-50 shadow-sm space-y-8">
-                                        <h3 className="text-xl font-black text-primary tracking-tight flex items-center gap-4">
-                                          <MapPin className="text-emerald-500" size={24} />
+                                      <div className="bg-white p-5 sm:p-8 rounded-3xl border border-slate-50 shadow-sm space-y-6 sm:space-y-8">
+                                        <h3 className="text-lg sm:text-xl font-bold text-primary tracking-tight flex items-center gap-3">
+                                          <MapPin className="text-emerald-500" size={20} />
                                           Route Selection
                                         </h3>
                                         
-                                        <div className="space-y-6">
-                                          <div className="space-y-3">
-                                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] ml-4">Boarding Point*</label>
+                                        <div className="space-y-4 sm:space-y-6">
+                                          <div className="space-y-2">
+                                            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest sm:ml-4 ml-2">Boarding Point*</label>
                                             <div className="relative">
                                               <select 
-                                                className="w-full px-6 py-5 bg-slate-50 border-none rounded-[1.5rem] font-black text-primary outline-none focus:ring-2 focus:ring-accent/20 focus:bg-white transition-all appearance-none cursor-pointer text-base"
+                                                className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl font-medium text-slate-700 outline-none focus:ring-2 focus:ring-accent/20 focus:bg-white transition-all appearance-none cursor-pointer text-sm"
                                                 value={selectedBoarding}
                                                 onChange={e => setSelectedBoarding(e.target.value)}
                                               >
@@ -1281,11 +1410,11 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                                             </div>
                                           </div>
 
-                                          <div className="space-y-3">
-                                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] ml-4">Dropping Point*</label>
+                                          <div className="space-y-2">
+                                            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest sm:ml-4 ml-2">Dropping Point*</label>
                                             <div className="relative">
                                               <select 
-                                                className="w-full px-6 py-5 bg-slate-50 border-none rounded-[1.5rem] font-black text-primary outline-none focus:ring-2 focus:ring-accent/20 focus:bg-white transition-all appearance-none cursor-pointer text-base"
+                                                className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl font-medium text-slate-700 outline-none focus:ring-2 focus:ring-accent/20 focus:bg-white transition-all appearance-none cursor-pointer text-sm"
                                                 value={selectedDropping}
                                                 onChange={e => setSelectedDropping(e.target.value)}
                                               >
@@ -1317,7 +1446,7 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                                           </div>
                                           <div className="flex justify-between items-center p-5 bg-slate-50 rounded-[1.5rem]">
                                             <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Departure Time</span>
-                                            <span className="text-sm font-black text-primary">{format(new Date(trip.departureTime), 'MMM dd, hh:mm a')}</span>
+                                            <span className="text-sm font-black text-primary">{safeFormat(trip.departureTime, 'MMM dd, hh:mm a')}</span>
                                           </div>
                                           <div className="pt-8 border-t border-slate-100 flex justify-between items-center">
                                             <span className="text-lg font-black text-primary uppercase tracking-widest">Total Payable</span>
@@ -1350,21 +1479,21 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                                 )}
 
                                 {bookingStep === 3 && (
-                                  <motion.div 
+                                   <motion.div 
                                     key="step3"
                                     initial={{ opacity: 0, x: 20 }}
                                     animate={{ opacity: 1, x: 0 }}
                                     exit={{ opacity: 0, x: -20 }}
-                                    className="max-w-3xl mx-auto pb-24 lg:pb-0"
+                                    className="max-w-2xl mx-auto pb-24 lg:pb-0"
                                   >
-                                      <div className="bg-white p-10 rounded-[3rem] border border-slate-50 shadow-sm space-y-10 relative overflow-hidden group glossy-overlay">
-                                        <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-accent via-emerald-400 to-accent" />
-                                        <div className="text-center space-y-4">
-                                          <h3 className="text-3xl font-black text-primary tracking-tight">Secure Checkout</h3>
-                                          <p className="text-slate-400 font-bold text-sm">Select your preferred payment method to complete booking</p>
+                                      <div className="bg-white p-6 sm:p-8 rounded-3xl border border-slate-50 shadow-sm space-y-8 relative overflow-hidden group glossy-overlay">
+                                        <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-accent via-emerald-400 to-accent" />
+                                        <div className="text-center space-y-2">
+                                          <h3 className="text-xl sm:text-2xl font-bold text-primary tracking-tight">Secure Checkout</h3>
+                                          <p className="text-slate-500 font-medium text-xs sm:text-sm">Select your preferred payment method to complete booking</p>
                                         </div>
 
-                                        <div className="grid md:grid-cols-3 gap-8">
+                                        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6">
                                           {[
                                             { id: 'bKash', label: 'bKash', color: 'bg-[#D12053]', icon: Smartphone },
                                             { id: 'Nagad', label: 'Nagad', color: 'bg-[#F7941D]', icon: Wallet },
@@ -1374,72 +1503,78 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                                               key={method.id}
                                               onClick={() => setPaymentMethod(method.id)}
                                               className={cn(
-                                                "p-8 rounded-[2rem] border-2 transition-all duration-500 flex flex-col items-center gap-4 relative overflow-hidden group",
+                                                "p-4 sm:p-6 rounded-2xl border-2 transition-all duration-300 flex flex-col items-center gap-3 relative overflow-hidden group",
                                                 paymentMethod === method.id 
-                                                  ? "border-accent bg-accent/5 scale-105 shadow-xl" 
-                                                  : "border-slate-50 bg-slate-50 hover:border-slate-200 hover:bg-white"
+                                                  ? "border-accent bg-accent/5 scale-100 sm:scale-105 shadow-md" 
+                                                  : "border-slate-100 bg-slate-50 hover:border-slate-200 hover:bg-white"
                                               )}
                                             >
-                                              <div className={cn("w-16 h-16 rounded-2xl flex items-center justify-center text-white shadow-xl transition-transform duration-500 group-hover:scale-110", method.color)}>
-                                                <method.icon size={32} />
+                                              <div className={cn("w-12 h-12 sm:w-14 sm:h-14 rounded-2xl flex items-center justify-center text-white shadow-md transition-transform duration-300 group-hover:scale-105", method.color)}>
+                                                <method.icon size={24} />
                                               </div>
-                                              <span className="font-black text-slate-900 uppercase tracking-[0.15em] text-sm">{method.label}</span>
+                                              <span className="font-bold text-slate-700 uppercase tracking-widest text-[10px] sm:text-xs">{method.label}</span>
                                               {paymentMethod === method.id && (
                                                 <motion.div 
                                                   initial={{ scale: 0 }}
                                                   animate={{ scale: 1 }}
-                                                  className="absolute top-4 right-4 text-accent"
+                                                  className="absolute top-2 right-2 sm:top-3 sm:right-3 text-accent"
                                                 >
-                                                  <CheckCircle2 size={24} fill="currentColor" className="text-accent bg-white rounded-full" />
+                                                  <CheckCircle2 size={20} fill="currentColor" className="text-accent bg-white rounded-full" />
                                                 </motion.div>
                                               )}
                                             </button>
                                           ))}
                                         </div>
 
-                                        <div className="bg-slate-50/50 p-10 rounded-[2rem] border border-slate-100 backdrop-blur-sm space-y-10">
-                                          <div className="space-y-6">
-                                            <div className="flex justify-between items-center text-slate-500 font-bold">
-                                              <span className="text-base uppercase tracking-widest">Subtotal</span>
-                                              <span className="text-2xl font-black text-slate-900 font-num">৳ {selectedSeats.length * (trip.fare || 500)}</span>
+                                         <div className="bg-slate-50/70 p-5 sm:p-8 rounded-3xl border border-slate-100 backdrop-blur-sm space-y-6">
+                                          {bookingError && (
+                                            <div className="bg-red-50 text-red-600 p-4 rounded-xl text-sm font-bold border border-red-100 flex items-center justify-between">
+                                              <span>{bookingError}</span>
+                                              <button onClick={() => setBookingError(null)} className="text-red-400 hover:text-red-700"><X size={16}/></button>
                                             </div>
-                                            <div className="flex justify-between items-center text-slate-500 font-bold">
-                                              <span className="text-base uppercase tracking-widest">Processing Fee</span>
-                                              <span className="text-2xl font-black text-emerald-500 font-num">FREE</span>
+                                          )}
+                                          <div className="space-y-4">
+                                            <div className="flex justify-between items-center text-slate-500 font-medium">
+                                              <span className="text-xs sm:text-sm uppercase tracking-widest text-slate-600">Subtotal</span>
+                                              <span className="text-lg sm:text-xl font-bold text-slate-800 font-num">৳ {selectedSeats.length * (trip.fare || 500)}</span>
                                             </div>
-                                            <div className="pt-10 border-t border-slate-200 flex justify-between items-end">
-                                              <div className="space-y-2">
-                                                <span className="text-base font-black text-slate-400 uppercase tracking-widest">Total Amount</span>
-                                                <p className="text-slate-500 text-sm font-medium">Final price including all charges</p>
+                                            <div className="flex justify-between items-center text-slate-500 font-medium">
+                                              <span className="text-xs sm:text-sm uppercase tracking-widest text-slate-600">Processing Fee</span>
+                                              <span className="text-sm font-bold text-emerald-500">FREE</span>
+                                            </div>
+                                            <div className="pt-6 border-t border-slate-200 flex justify-between items-end">
+                                              <div className="space-y-1">
+                                                <span className="text-sm font-bold text-slate-500 uppercase tracking-widest">Total Amount</span>
+                                                <p className="text-slate-400 text-[10px] sm:text-xs">Final price including all charges</p>
                                               </div>
-                                              <span className="text-5xl font-black text-accent tracking-tighter font-num leading-none">৳ {selectedSeats.length * (trip.fare || 500)}</span>
+                                              <span className="text-2xl sm:text-3xl font-bold text-accent tracking-tighter font-num leading-none">৳ {selectedSeats.length * (trip.fare || 500)}</span>
                                             </div>
                                           </div>
 
-                                          <div className="flex items-center gap-6 bg-white p-8 rounded-[1.5rem] border border-slate-200 shadow-sm">
+                                          <div className="flex items-start sm:items-center gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
                                             <input 
                                               type="checkbox" 
                                               id="terms"
                                               checked={termsAccepted}
                                               onChange={e => setTermsAccepted(e.target.checked)}
-                                              className="w-8 h-8 rounded-md accent-accent cursor-pointer"
+                                              className="w-5 h-5 sm:w-6 sm:h-6 mt-1 sm:mt-0 rounded accent-accent cursor-pointer border-slate-300"
                                             />
-                                            <label htmlFor="terms" className="text-base font-bold text-slate-600 cursor-pointer">
+                                            <label htmlFor="terms" className="text-xs sm:text-sm font-medium text-slate-600 cursor-pointer">
                                               I agree to the <span className="text-accent hover:underline">Terms of Service</span> and <span className="text-accent hover:underline">Privacy Policy</span>
                                             </label>
                                           </div>
 
-                                          <div className="flex gap-6 mt-10">
+                                          <div className="flex flex-col sm:flex-row gap-4 mt-6">
                                             <button 
                                               onClick={() => setBookingStep(2)}
-                                              className="flex-1 py-5 bg-white text-slate-600 font-black rounded-[1.5rem] border border-slate-200 hover:bg-slate-50 transition-all active:scale-95 shadow-sm text-base"
+                                              className="w-full sm:flex-1 py-4 bg-white text-slate-600 font-bold rounded-2xl border border-slate-200 hover:bg-slate-50 transition-all active:scale-95 shadow-sm text-sm"
                                             >
                                               Go Back
                                             </button>
                                             <button 
                                               disabled={!termsAccepted || !paymentMethod || loading}
                                               onClick={() => handleBooking()}
-                                              className="flex-[2] py-5 bg-accent text-white font-black rounded-[1.5rem] shadow-xl shadow-accent/20 hover:scale-[1.01] active:scale-95 disabled:opacity-50 disabled:hover:scale-100 transition-all flex items-center justify-center gap-3 relative overflow-hidden group text-lg"
+                                              className="w-full sm:flex-[2] py-4 bg-accent text-white font-bold rounded-2xl shadow-lg shadow-accent/20 hover:scale-[1.01] active:scale-95 disabled:opacity-50 disabled:hover:scale-100 transition-all flex items-center justify-center gap-2 relative overflow-hidden group text-sm sm:text-base"
                                             >
                                               {loading ? (
                                                 <div className="w-6 h-6 border-4 border-white/30 border-t-white rounded-full animate-spin" />
@@ -1461,8 +1596,9 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                             </motion.div>
                           )}
                         </AnimatePresence>
-                      </motion.div>
-                    );
+                      </div>
+                    </motion.div>
+                  );
                   })}
                 </div>
               </motion.div>
@@ -1475,279 +1611,6 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
               <p className="text-slate-400 text-sm">Please try another date or route.</p>
             </div>
           ) : null}
-        </AnimatePresence>
-
-        {/* Confirmation Modal */}
-        <AnimatePresence>
-          {showConfirmationModal && selectedTrip && (
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-primary/80 backdrop-blur-md"
-            >
-              <motion.div 
-                initial={{ scale: 0.9, y: 20, opacity: 0 }}
-                animate={{ scale: 1, y: 0, opacity: 1 }}
-                exit={{ scale: 0.9, y: 20, opacity: 0 }}
-                className="bg-white rounded-[3rem] w-full max-w-lg md:max-w-3xl lg:max-w-5xl shadow-2xl relative max-h-[90vh] overflow-hidden flex flex-col border border-white/20"
-              >
-                {/* Header */}
-                <div className="bg-primary p-10 text-white flex justify-between items-center relative overflow-hidden shrink-0">
-                  <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(circle_at_50%_0%,rgba(58,175,169,0.3)_0%,transparent_70%)]" />
-                  <div className="relative z-10">
-                    <h2 className="text-3xl font-black tracking-tighter mb-2">Confirm Your Booking</h2>
-                    <p className="text-white/60 font-bold text-sm uppercase tracking-widest">Review details and complete payment</p>
-                  </div>
-                  <button 
-                    onClick={async () => {
-                      setShowConfirmationModal(false);
-                      if (selectedTrip) {
-                        try {
-                          const locksToRemove = selectedTrip.lockedSeats?.filter(l => selectedSeats.includes(l.seatId) && l.counterId === (auth.currentUser?.uid || sessionId)) || [];
-                          if (locksToRemove.length > 0) {
-                            await updateDoc(doc(db, 'trips', selectedTrip.id), {
-                              lockedSeats: arrayRemove(...locksToRemove)
-                            });
-                          }
-                        } catch (e) {
-                          console.error("Failed to remove locks", e);
-                        }
-                      }
-                    }} 
-                    className="relative z-10 p-4 bg-white/10 rounded-full hover:bg-white/20 transition-all active:scale-90"
-                  >
-                    <X size={24} />
-                  </button>
-                </div>
-                
-                <div className="p-10 overflow-y-auto bg-slate-50/50">
-                  <div className="mb-12 text-center">
-                    <p className="text-3xl font-black text-primary tracking-tight">{popupSettings.title}</p>
-                    <p className="text-base font-bold text-slate-400 mt-3">{popupSettings.description}</p>
-                  </div>
-                  
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
-                    {/* Left Column */}
-                    <div className="space-y-8">
-                      {/* Booking Details Card */}
-                      <div className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-slate-100 relative overflow-hidden group">
-                        <div className="absolute top-0 left-0 w-2 h-full bg-accent" />
-                        <div className="flex justify-between items-center mb-8">
-                          <h4 className="font-black text-primary text-base uppercase tracking-widest flex items-center gap-3">
-                            <div className="bg-accent/10 p-2 rounded-xl">
-                              <BusIcon size={20} className="text-accent" />
-                            </div>
-                            Journey Details
-                          </h4>
-                          <span className="text-xs font-black text-slate-400 uppercase tracking-widest bg-slate-50 px-4 py-2 rounded-full border border-slate-100">Onward</span>
-                        </div>
-                        
-                        <div className="space-y-8">
-                          <div>
-                            <h3 className="font-black text-accent text-2xl tracking-tight">{operators.find(o => o.id === selectedTrip.operatorId)?.name || 'Unknown Operator'}</h3>
-                            <p className="text-sm font-bold text-slate-400 mt-1 uppercase tracking-widest">{routes.find(r => r.id === selectedTrip.routeId)?.name || 'Unknown Route'}</p>
-                          </div>
-                          
-                          <div className="flex justify-between items-center bg-slate-50/50 p-6 rounded-[1.5rem] border border-slate-50">
-                            <div className="flex-1">
-                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-2">Departure</p>
-                              <p className="font-black text-primary text-2xl font-num">{safeFormat(selectedTrip.departureTime, 'hh:mm a')}</p>
-                              <p className="text-xs font-bold text-slate-500 mt-1">{counters.find(c => c.id === searchParams.from)?.name || 'Unknown'}</p>
-                            </div>
-                            
-                            <div className="flex-1 px-4 flex flex-col items-center justify-center relative">
-                              <div className="flex items-center gap-1 text-[10px] text-slate-400 font-black uppercase tracking-[0.2em] mb-4">
-                                <Calendar size={12} />
-                                <span className="font-num">{safeFormat(selectedTrip.departureTime, 'yyyy-MM-dd')}</span>
-                              </div>
-                              <div className="w-full h-[3px] bg-slate-200 relative flex items-center justify-center rounded-full">
-                                <div className="absolute w-4 h-4 rounded-full bg-accent left-0 shadow-lg shadow-accent/20"></div>
-                                <div className="absolute w-4 h-4 rounded-full bg-accent right-0 shadow-lg shadow-accent/20"></div>
-                              </div>
-                              <div className="flex items-center gap-1 text-[10px] text-slate-400 font-black uppercase tracking-[0.2em] mt-4">
-                                <Clock size={12} />
-                                <span className="font-num">{
-                                  (() => {
-                                    try {
-                                      const dep = new Date(selectedTrip.departureTime);
-                                      const arr = new Date(selectedTrip.arrivalTime);
-                                      const diffMs = arr.getTime() - dep.getTime();
-                                      const diffHrs = Math.floor(diffMs / (1000 * 60 * 60));
-                                      const diffMins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
-                                      return `${diffHrs.toString().padStart(2, '0')}h ${diffMins.toString().padStart(2, '0')}m`;
-                                    } catch (e) {
-                                      return '00h 00m';
-                                    }
-                                  })()
-                                }</span>
-                              </div>
-                            </div>
-                            
-                            <div className="flex-1 text-right">
-                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-2">Arrival</p>
-                              <p className="font-black text-primary text-2xl font-num">{safeFormat(selectedTrip.arrivalTime, 'hh:mm a')}</p>
-                              <p className="text-xs font-bold text-slate-500 mt-1">{counters.find(c => c.id === searchParams.to)?.name || 'Unknown'}</p>
-                            </div>
-                          </div>
-                          
-                          <div className="pt-6 flex items-center gap-4">
-                            <div className="bg-accent/10 p-3 rounded-2xl">
-                              <Ticket size={24} className="text-accent" />
-                            </div>
-                            <div>
-                              <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Selected Seats</p>
-                              <div className="flex flex-wrap gap-2">
-                                {selectedSeats.map(s => (
-                                  <span key={s} className="px-4 py-1.5 bg-primary text-white rounded-xl text-sm font-black font-num shadow-sm">{s}</span>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Passenger Details Card */}
-                      <div className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-slate-100">
-                        <h4 className="font-black text-primary text-base uppercase tracking-widest mb-8 flex items-center gap-3">
-                          <div className="bg-primary/5 p-2 rounded-xl">
-                            <User size={20} className="text-primary" />
-                          </div>
-                          Passenger Details
-                        </h4>
-                        <div className="space-y-6">
-                          <div className="flex justify-between items-center pb-4 border-b border-slate-50">
-                            <p className="text-sm font-black text-slate-400 uppercase tracking-widest">Name</p>
-                            <p className="text-base font-black text-primary">{passengerData.name}</p>
-                          </div>
-                          <div className="flex justify-between items-center pb-4 border-b border-slate-50">
-                            <p className="text-sm font-black text-slate-400 uppercase tracking-widest">Phone</p>
-                            <p className="text-base font-black text-primary font-num">{passengerData.phone}</p>
-                          </div>
-                          <div className="flex justify-between items-center">
-                            <p className="text-sm font-black text-slate-400 uppercase tracking-widest">Email</p>
-                            <p className="text-base font-black text-primary">{passengerData.email}</p>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Right Column */}
-                    <div className="space-y-8">
-                      {/* Fare Details Card */}
-                      <div className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-slate-100">
-                        <h4 className="font-black text-primary text-base uppercase tracking-widest mb-8 flex items-center gap-3">
-                          <div className="bg-emerald-50 p-2 rounded-xl">
-                            <CreditCard size={20} className="text-emerald-500" />
-                          </div>
-                          Fare Summary
-                        </h4>
-                        <div className="space-y-5">
-                          <div className="flex justify-between items-center">
-                            <p className="text-sm font-bold text-slate-500">Seat Fare ({selectedSeats.length} seats)</p>
-                            <p className="text-lg font-black text-primary font-num">৳ {(selectedSeats.length * (selectedTrip.fare || 500)).toLocaleString()}</p>
-                          </div>
-                          <div className="flex justify-between items-center">
-                            <p className="text-sm font-bold text-slate-500">Processing Fee</p>
-                            <p className="text-lg font-black text-primary font-num">৳ 40</p>
-                          </div>
-                          <div className="flex justify-between items-center p-4 bg-emerald-50 rounded-2xl border border-emerald-100">
-                            <p className="text-sm font-black text-emerald-600 uppercase tracking-widest">Discount Applied</p>
-                            <p className="text-lg font-black text-emerald-600 font-num">- ৳ 40</p>
-                          </div>
-                          <div className="pt-6 border-t border-slate-100 flex justify-between items-end">
-                            <div>
-                              <p className="text-xs font-black text-slate-400 uppercase tracking-widest mb-1">Total Amount</p>
-                              <p className="text-[10px] font-bold text-slate-400">Inclusive of all taxes</p>
-                            </div>
-                            <p className="text-4xl font-black text-accent tracking-tighter font-num">
-                              ৳ {(selectedSeats.length * (selectedTrip.fare || 500)).toLocaleString()}
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Payment and Coupon */}
-                      <div className="space-y-8">
-                        <div className="grid grid-cols-2 gap-6">
-                          <div className="space-y-3">
-                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">Payment Method<span className="text-accent">*</span></label>
-                            <div className="relative">
-                              <select 
-                                className="w-full pl-6 pr-12 py-4 bg-white border-2 border-slate-100 rounded-[1.2rem] font-black text-primary appearance-none focus:border-accent transition-all text-sm cursor-pointer"
-                                value={paymentMethod}
-                                onChange={e => setPaymentMethod(e.target.value)}
-                              >
-                                <option>bKash</option>
-                                <option>Nagad</option>
-                                <option>Rocket</option>
-                              </select>
-                              <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={18} />
-                            </div>
-                          </div>
-                          
-                          <div className="space-y-3">
-                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] ml-2">Coupon Code</label>
-                            <div className="flex gap-2">
-                              <input 
-                                className="flex-1 px-6 py-4 bg-white border-2 border-slate-100 rounded-[1.2rem] font-black text-primary placeholder:text-slate-300 focus:border-accent transition-all text-sm"
-                                placeholder="CODE"
-                                value={couponCode}
-                                onChange={e => setCouponCode(e.target.value)}
-                              />
-                              <button className="px-4 bg-primary text-white rounded-[1rem] font-black text-xs uppercase tracking-widest hover:bg-primary/90 transition-all active:scale-95">
-                                Apply
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                        
-                        {/* Cancellation Policy & Terms */}
-                        <div className="p-6 bg-white rounded-[1.5rem] border-2 border-dashed border-slate-200 flex items-center justify-between group hover:border-accent/30 transition-colors">
-                          <div className="flex items-center gap-4">
-                            <div className="bg-amber-50 p-3 rounded-xl">
-                              <Info size={20} className="text-amber-500" />
-                            </div>
-                            <div>
-                              <p className="text-sm font-black text-primary">Cancellation Policy</p>
-                              <p className="text-xs font-bold text-slate-400">Tickets are non-refundable during Eid holidays.</p>
-                            </div>
-                          </div>
-                          <span className="bg-red-50 text-red-500 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-full border border-red-100">Non-Refundable</span>
-                        </div>
-
-                        <div className="space-y-6 pt-4">
-                          <label className="flex items-center gap-4 cursor-pointer group">
-                            <div className="relative flex items-center">
-                              <input 
-                                type="checkbox" 
-                                checked={termsAccepted}
-                                onChange={e => setTermsAccepted(e.target.checked)}
-                                className="peer h-6 w-6 cursor-pointer appearance-none rounded-lg border-2 border-slate-200 bg-white checked:bg-accent checked:border-accent transition-all"
-                              />
-                              <Check className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-white opacity-0 peer-checked:opacity-100 transition-opacity pointer-events-none" size={14} strokeWidth={4} />
-                            </div>
-                            <span className="text-xs font-bold text-slate-500 leading-relaxed">
-                              I agree to the <span className="text-accent hover:underline">Terms & Conditions</span> and <span className="text-accent hover:underline">Privacy Policy</span>.
-                            </span>
-                          </label>
-
-                          <button 
-                            onClick={handleBooking}
-                            disabled={!termsAccepted}
-                            className="w-full py-6 bg-accent text-white font-black rounded-[1.5rem] shadow-2xl shadow-accent/30 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3 text-lg uppercase tracking-widest"
-                          >
-                            <Shield size={24} />
-                            Confirm & Purchase
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </motion.div>
-            </motion.div>
-          )}
         </AnimatePresence>
       </div>
     </div>
@@ -1808,77 +1671,77 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[150] flex items-center justify-center bg-primary/95 backdrop-blur-xl p-4 md:p-6"
+            className="fixed inset-0 z-[150] flex items-center justify-center bg-primary/95 backdrop-blur-xl p-4 sm:p-6"
           >
             <motion.div 
               initial={{ scale: 0.95, y: 30, opacity: 0 }}
               animate={{ scale: 1, y: 0, opacity: 1 }}
-              className="bg-white rounded-[3rem] w-full max-w-4xl max-h-[90vh] overflow-y-auto shadow-[0_50px_100px_rgba(0,0,0,0.5)] relative"
+              className="bg-white rounded-[2rem] md:rounded-[3rem] w-full max-w-4xl max-h-[95vh] overflow-y-auto shadow-[0_50px_100px_rgba(0,0,0,0.5)] relative"
             >
               <button 
                 onClick={() => setBookingSuccess(null)} 
-                className="absolute top-8 right-8 p-4 bg-slate-100 hover:bg-slate-200 rounded-2xl transition-all z-10 group"
+                className="absolute top-4 right-4 md:top-8 md:right-8 p-3 md:p-4 bg-slate-100 hover:bg-slate-200 rounded-xl md:rounded-2xl transition-all z-10 group"
               >
-                <X size={28} className="text-slate-500 group-hover:text-primary group-hover:rotate-90 transition-all duration-500" />
+                <X size={24} className="text-slate-500 group-hover:text-primary group-hover:rotate-90 transition-all duration-500" />
               </button>
 
-              <div className="p-10 md:p-16 grid md:grid-cols-2 gap-12 items-center">
-                <div className="space-y-10 text-center md:text-left">
+              <div className="p-6 pt-16 md:p-16 grid md:grid-cols-2 gap-8 md:gap-12 items-center">
+                <div className="space-y-6 md:space-y-10 text-center md:text-left">
                   <div className="relative inline-flex">
-                    <div className="absolute inset-0 bg-emerald-400 rounded-[1.5rem] animate-ping opacity-20" />
-                    <div className="relative bg-emerald-500 p-6 rounded-[1.5rem] shadow-2xl shadow-emerald-200">
-                      <CheckCircle2 size={48} className="text-white" />
+                    <div className="absolute inset-0 bg-emerald-400 rounded-2xl md:rounded-[1.5rem] animate-ping opacity-20" />
+                    <div className="relative bg-emerald-500 p-4 md:p-6 rounded-2xl md:rounded-[1.5rem] shadow-xl md:shadow-emerald-200">
+                      <CheckCircle2 size={36} className="text-white md:w-12 md:h-12" />
                     </div>
                   </div>
 
-                  <div className="space-y-6">
-                    <h2 className="text-5xl font-black text-primary tracking-tighter leading-tight">Booking<br />Successful!</h2>
-                    <p className="text-slate-500 font-bold text-2xl">Your Ticket ID: <span className="text-accent font-black font-num">{bookingSuccess.id}</span></p>
+                  <div className="space-y-4 md:space-y-6">
+                    <h2 className="text-3xl sm:text-4xl md:text-5xl font-black text-primary tracking-tighter leading-tight">Booking<br />Successful!</h2>
+                    <p className="text-slate-500 font-bold text-lg md:text-2xl">Your Ticket ID: <span className="text-accent font-black font-num block sm:inline mt-1 sm:mt-0">{bookingSuccess.id}</span></p>
                     {(() => {
                       const trip = trips.find(t => t.id === bookingSuccess.tripId);
                       return trip ? (
-                        <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 inline-block">
-                          <p className="text-slate-500 font-bold text-xs uppercase tracking-[0.3em] mb-2">Travel Date</p>
-                          <p className="text-primary font-black text-2xl font-num">{safeFormat(trip.departureTime, 'dd MMMM, yyyy')}</p>
+                        <div className="bg-slate-50 p-4 md:p-6 rounded-2xl border border-slate-100 inline-block w-full sm:w-auto">
+                          <p className="text-slate-500 font-bold text-[10px] md:text-xs uppercase tracking-[0.3em] mb-1 md:mb-2">Travel Date</p>
+                          <p className="text-primary font-black text-xl md:text-2xl font-num">{safeFormat(trip.departureTime, 'dd MMMM, yyyy')}</p>
                         </div>
                       ) : null;
                     })()}
                   </div>
 
-                  <div className="flex flex-col gap-6">
+                  <div className="flex flex-col gap-4 md:gap-6">
                     <button 
                       onClick={downloadETicket} 
-                      className="w-full bg-primary text-white py-5 rounded-[1.5rem] font-black text-xl flex items-center justify-center gap-4 shadow-2xl shadow-primary/30 hover:scale-[1.02] active:scale-95 transition-all"
+                      className="w-full bg-primary text-white py-4 md:py-5 rounded-2xl md:rounded-[1.5rem] font-black text-lg md:text-xl flex items-center justify-center gap-3 shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all"
                     >
-                      <Download size={28} />
+                      <Download size={24} />
                       <span>Download E-Ticket</span>
                     </button>
-                    <div className="grid grid-cols-2 gap-6">
+                    <div className="grid grid-cols-2 gap-4 md:gap-6">
                       <button 
                         onClick={() => { setTrackingTripId(bookingSuccess.tripId); setBookingSuccess(null); }} 
-                        className="py-5 bg-white border-2 border-slate-100 rounded-[1.5rem] font-black text-primary hover:border-accent hover:text-accent transition-all flex items-center justify-center gap-3 text-base"
+                        className="py-4 md:py-5 bg-white border-2 border-slate-100 rounded-2xl md:rounded-[1.5rem] font-bold text-primary hover:border-accent hover:text-accent transition-all flex items-center justify-center gap-2 text-sm md:text-base"
                       >
-                        <Navigation size={24} />
+                        <Navigation size={20} />
                         <span>Track Bus</span>
                       </button>
                       <button 
                         onClick={printETicket} 
-                        className="py-5 bg-white border-2 border-slate-100 rounded-[1.5rem] font-black text-primary hover:border-emerald-500 hover:text-emerald-500 transition-all flex items-center justify-center gap-3 text-base"
+                        className="py-4 md:py-5 bg-white border-2 border-slate-100 rounded-2xl md:rounded-[1.5rem] font-bold text-primary hover:border-emerald-500 hover:text-emerald-500 transition-all flex items-center justify-center gap-2 text-sm md:text-base"
                       >
-                        <Printer size={24} />
+                        <Printer size={20} />
                         <span>Print</span>
                       </button>
                     </div>
                   </div>
                 </div>
 
-                <div className="flex flex-col items-center gap-10 bg-slate-50 p-10 rounded-[2.5rem] border border-slate-100">
-                  <div className="p-10 bg-white rounded-[2rem] shadow-2xl shadow-slate-200 border border-slate-100">
-                    <QRCodeCanvas id="ticket-qrcode" value={bookingSuccess.id} size={240} level="H" includeMargin />
+                <div className="flex flex-col items-center gap-6 md:gap-10 bg-slate-50 p-6 md:p-10 rounded-[2rem] md:rounded-[2.5rem] border border-slate-100 mt-4 md:mt-0">
+                  <div className="p-6 md:p-10 bg-white rounded-[1.5rem] md:rounded-[2rem] shadow-xl md:shadow-2xl shadow-slate-200 border border-slate-100">
+                    <QRCodeCanvas id="ticket-qrcode" value={bookingSuccess.id} size={180} level="H" includeMargin />
                   </div>
-                  <div className="text-center space-y-3">
-                    <p className="text-sm text-slate-400 font-black uppercase tracking-[0.4em]">Digital Ticket QR</p>
-                    <p className="text-base text-slate-500 font-bold">Show this QR code at the counter for verification</p>
+                  <div className="text-center space-y-2 md:space-y-3">
+                    <p className="text-[10px] md:text-sm text-slate-400 font-bold uppercase tracking-[0.3em] md:tracking-[0.4em]">Digital Ticket QR</p>
+                    <p className="text-xs md:text-base text-slate-500 font-medium px-4 md:px-0">Show this QR code at the counter for verification</p>
                   </div>
                 </div>
               </div>
@@ -1902,6 +1765,170 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
           {renderTracking(trackingTripId)}
         </section>
       )}
+
+      {/* New Feature Modals */}
+      <AnimatePresence>
+        {showPolicyModal && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-primary/40 backdrop-blur-xl"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="bg-white rounded-[2.5rem] shadow-2xl max-w-2xl w-full p-8 md:p-12 relative overflow-hidden max-h-[90vh] overflow-y-auto"
+            >
+              <button onClick={() => setShowPolicyModal(false)} className="absolute top-6 right-6 p-2 hover:bg-slate-100 rounded-full transition-colors text-slate-400">
+                <X size={24} />
+              </button>
+              
+              <div className="flex items-center gap-6 mb-10">
+                <div className="bg-accent/10 p-5 rounded-3xl">
+                  <ShieldCheck size={32} className="text-accent" />
+                </div>
+                <div>
+                  <h2 className="text-3xl font-black text-primary tracking-tight">Cancellation Policy</h2>
+                  <p className="text-slate-500 font-bold">Refunds & Deadlines</p>
+                </div>
+              </div>
+
+              <div className="space-y-8">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="p-6 bg-slate-50 rounded-[2rem] border border-slate-100 space-y-4">
+                    <div className="flex items-center gap-3 text-emerald-600">
+                      <Clock size={20} />
+                      <span className="font-black text-sm uppercase tracking-widest">Standard Refund</span>
+                    </div>
+                    <p className="text-2xl font-black text-primary">80% Refund</p>
+                    <p className="text-xs font-bold text-slate-500 leading-relaxed uppercase tracking-wider">Cancel at least <span className="text-accent">24 hours</span> before departure</p>
+                  </div>
+                  <div className="p-6 bg-slate-50 rounded-[2rem] border border-slate-100 space-y-4">
+                    <div className="flex items-center gap-3 text-amber-600">
+                      <Clock size={20} />
+                      <span className="font-black text-sm uppercase tracking-widest">Partial Refund</span>
+                    </div>
+                    <p className="text-2xl font-black text-primary">50% Refund</p>
+                    <p className="text-xs font-bold text-slate-500 leading-relaxed uppercase tracking-wider">Cancel <span className="text-accent">6 - 24 hours</span> before departure</p>
+                  </div>
+                </div>
+
+                <div className="space-y-6">
+                  <div className="flex gap-6 p-0 md:p-6">
+                    <div className="shrink-0 w-12 h-12 bg-red-50 rounded-2xl flex items-center justify-center text-red-500">
+                      <X size={24} />
+                    </div>
+                    <div className="space-y-2">
+                      <h4 className="font-black text-primary uppercase tracking-widest text-sm">No Refund Policy</h4>
+                      <p className="text-sm text-slate-500 font-medium leading-relaxed">
+                        Cancellations made within <span className="font-black">6 hours</span> of the scheduled departure time are not eligible for any refund. Tickets booked with promotional codes or during flash sales are non-refundable.
+                      </p>
+                    </div>
+                  </div>
+                  
+                  <div className="flex gap-6 p-0 md:p-6">
+                    <div className="shrink-0 w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center text-blue-500">
+                      <Info size={24} />
+                    </div>
+                    <div className="space-y-2">
+                      <h4 className="font-black text-primary uppercase tracking-widest text-sm">How to Cancel</h4>
+                      <p className="text-sm text-slate-500 font-medium leading-relaxed">
+                        Visit your dashboard or use the ticket tracking tool to request a cancellation. Refunds take 3-5 business days to process back to your original payment method.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-12">
+                <button 
+                  onClick={() => setShowPolicyModal(false)}
+                  className="w-full py-5 bg-primary text-white font-black rounded-[1.5rem] shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all uppercase tracking-widest text-sm"
+                >
+                  I Understand
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+
+        {showFeedbackModal && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-primary/40 backdrop-blur-xl"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="bg-white rounded-[2.5rem] shadow-2xl max-w-lg w-full p-8 md:p-10 relative overflow-hidden"
+            >
+              <button onClick={() => setShowFeedbackModal(false)} className="absolute top-6 right-6 p-2 hover:bg-slate-100 rounded-full transition-colors text-slate-400">
+                <X size={24} />
+              </button>
+              
+              <div className="text-center space-y-4 mb-10">
+                <div className="w-20 h-20 bg-accent/10 rounded-[2rem] flex items-center justify-center mx-auto">
+                  <StarIcon size={32} className="text-accent" />
+                </div>
+                <h2 className="text-3xl font-black text-primary tracking-tight">Your Feedback Matters</h2>
+                <p className="text-slate-500 font-bold text-sm leading-relaxed px-4">
+                  Help us improve SwiftLine by rating your experience and sharing your suggestions.
+                </p>
+              </div>
+
+              <div className="space-y-8">
+                <div className="space-y-4">
+                  <label className="block text-xs font-black text-slate-400 uppercase tracking-[0.2em] text-center">Rate Your Experience</label>
+                  <div className="flex justify-center gap-3">
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <button 
+                        key={star}
+                        onClick={() => setFeedbackRating(star)}
+                        className={cn(
+                          "w-12 h-12 rounded-2xl flex items-center justify-center transition-all duration-300",
+                          feedbackRating >= star ? "bg-accent text-white scale-110 shadow-lg shadow-accent/20" : "bg-slate-50 text-slate-300 hover:bg-slate-100"
+                        )}
+                      >
+                        <StarIcon size={24} fill={feedbackRating >= star ? "currentColor" : "none"} />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <label className="block text-xs font-black text-slate-400 uppercase tracking-[0.2em] ml-4">Suggestions (Optional)</label>
+                  <textarea 
+                    placeholder="How can we make your journey better?"
+                    value={feedbackSuggestion}
+                    onChange={(e) => setFeedbackSuggestion(e.target.value)}
+                    className="w-full p-6 bg-slate-50 border-none rounded-[1.5rem] text-primary placeholder:text-slate-400 font-bold focus:ring-2 focus:ring-accent/20 transition-all min-h-[120px] resize-none"
+                  />
+                </div>
+
+                <button 
+                  disabled={isSubmittingFeedback || feedbackRating === 0}
+                  onClick={handleFeedbackSubmit}
+                  className="w-full py-5 bg-accent text-white font-black rounded-[1.5rem] shadow-xl shadow-accent/20 hover:scale-[1.02] active:scale-95 disabled:opacity-50 disabled:hover:scale-100 transition-all uppercase tracking-widest text-sm flex items-center justify-center gap-3"
+                >
+                  {isSubmittingFeedback ? (
+                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  ) : (
+                    <>
+                      <ThumbsUp size={18} />
+                      Submit Feedback
+                    </>
+                  )}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   </div>
 );

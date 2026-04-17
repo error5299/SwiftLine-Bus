@@ -908,32 +908,32 @@ export const OperatorPanel = () => {
 
       {/* Success Modal */}
       {bookingSuccess && (
-        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-primary/95 backdrop-blur-xl p-4 md:p-8">
-          <div className="bg-white rounded-[3.5rem] w-full max-w-4xl max-h-[90vh] overflow-y-auto shadow-[0_50px_100px_rgba(0,0,0,0.5)] relative">
+        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-primary/95 backdrop-blur-xl p-4 sm:p-8">
+          <div className="bg-white rounded-[2rem] md:rounded-[3.5rem] w-full max-w-4xl max-h-[95vh] overflow-y-auto shadow-[0_50px_100px_rgba(0,0,0,0.5)] relative">
             <button 
               onClick={() => setBookingSuccess(null)} 
-              className="absolute top-8 right-8 p-4 bg-slate-100 hover:bg-slate-200 rounded-full transition-all z-10 group"
+              className="absolute top-4 right-4 md:top-8 md:right-8 p-3 md:p-4 bg-slate-100 hover:bg-slate-200 rounded-xl md:rounded-full transition-all z-10 group"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-slate-500 group-hover:text-primary group-hover:rotate-90 transition-all duration-500"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-slate-500 group-hover:text-primary group-hover:rotate-90 transition-all duration-500 w-5 h-5 md:w-6 md:h-6"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
             </button>
 
-            <div className="p-8 md:p-16 grid md:grid-cols-2 gap-12 items-center">
-              <div className="space-y-8 text-center md:text-left">
+            <div className="p-6 pt-16 md:p-16 grid md:grid-cols-2 gap-8 md:gap-12 items-center">
+              <div className="space-y-6 md:space-y-8 text-center md:text-left">
                 <div className="relative inline-flex">
-                  <div className="absolute inset-0 bg-emerald-400 rounded-full animate-ping opacity-20" />
-                  <div className="relative bg-emerald-500 p-6 rounded-3xl shadow-2xl shadow-emerald-200">
-                    <CheckCircle2 size={48} className="text-white" />
+                  <div className="absolute inset-0 bg-emerald-400 rounded-2xl md:rounded-full animate-ping opacity-20" />
+                  <div className="relative bg-emerald-500 p-4 md:p-6 rounded-2xl md:rounded-3xl shadow-xl md:shadow-2xl shadow-emerald-200">
+                    <CheckCircle2 size={36} className="text-white md:w-12 md:h-12" />
                   </div>
                 </div>
 
                 <div className="space-y-4">
-                  <h2 className="text-5xl font-black text-primary tracking-tighter leading-tight">Booking<br />Successful!</h2>
-                  <p className="text-slate-500 font-bold text-xl">Your Ticket ID: <span className="text-accent font-black font-num">{bookingSuccess.id}</span></p>
+                  <h2 className="text-3xl sm:text-4xl md:text-5xl font-black text-primary tracking-tighter leading-tight">Booking<br />Successful!</h2>
+                  <p className="text-slate-500 font-bold text-base md:text-xl">Your Ticket ID: <span className="text-accent font-black font-num block sm:inline mt-1 sm:mt-0">{bookingSuccess.id}</span></p>
                   {(() => {
                     const trip = trips.find(t => t.id === bookingSuccess.tripId);
                     return trip ? (
-                      <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 inline-block">
-                        <p className="text-slate-500 font-bold text-sm uppercase tracking-widest mb-1">Travel Date</p>
+                      <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 inline-block w-full sm:w-auto">
+                        <p className="text-slate-500 font-bold text-xs md:text-sm uppercase tracking-widest mb-1">Travel Date</p>
                         <p className="text-primary font-black text-xl font-num">{format(new Date(trip.departureTime), 'dd MMMM, yyyy')}</p>
                       </div>
                     ) : null;
@@ -944,14 +944,14 @@ export const OperatorPanel = () => {
                   <div className="grid grid-cols-2 gap-4">
                     <button 
                       onClick={handlePrintTicket} 
-                      className="w-full bg-primary text-white py-4 rounded-2xl font-black text-lg flex items-center justify-center gap-3 shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all"
+                      className="w-full bg-primary text-white py-3 md:py-4 rounded-xl md:rounded-2xl font-black text-sm md:text-lg flex items-center justify-center gap-2 shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-95 transition-all"
                     >
                       <Printer size={20} />
                       <span>Print</span>
                     </button>
                     <button 
                       onClick={handleDownloadETicket} 
-                      className="w-full bg-accent text-white py-4 rounded-2xl font-black text-lg flex items-center justify-center gap-3 shadow-xl shadow-accent/20 hover:scale-[1.02] active:scale-95 transition-all"
+                      className="w-full bg-accent text-white py-3 md:py-4 rounded-xl md:rounded-2xl font-black text-sm md:text-lg flex items-center justify-center gap-2 shadow-xl shadow-accent/20 hover:scale-[1.02] active:scale-95 transition-all"
                     >
                       <Download size={20} />
                       <span>Download</span>
@@ -959,21 +959,21 @@ export const OperatorPanel = () => {
                   </div>
                   <button 
                     onClick={() => setBookingSuccess(null)} 
-                    className="py-4 bg-white border-2 border-slate-100 rounded-2xl font-black text-primary hover:border-accent hover:text-accent transition-all flex items-center justify-center gap-2"
+                    className="py-3 md:py-4 bg-white border-2 border-slate-100 rounded-xl md:rounded-2xl font-black text-primary hover:border-accent hover:text-accent transition-all flex items-center justify-center gap-2 text-sm md:text-base"
                   >
                     New Booking
                   </button>
                 </div>
               </div>
 
-              <div className="bg-slate-50 rounded-[2.5rem] p-8 md:p-12 border border-slate-100 flex flex-col items-center justify-center gap-8 relative overflow-hidden">
+              <div className="bg-slate-50 rounded-[2rem] md:rounded-[2.5rem] p-6 md:p-12 border border-slate-100 flex flex-col items-center justify-center gap-6 md:gap-8 relative overflow-hidden mt-4 md:mt-0">
                 <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-accent via-emerald-400 to-accent" />
-                <div className="bg-white p-6 rounded-[2rem] shadow-xl shadow-slate-200/50">
-                  <QRCodeCanvas id="ticket-qrcode" value={bookingSuccess.id} size={200} level="H" className="w-full h-auto" />
+                <div className="bg-white p-4 md:p-6 rounded-[1.5rem] md:rounded-[2rem] shadow-xl shadow-slate-200/50">
+                  <QRCodeCanvas id="ticket-qrcode" value={bookingSuccess.id} size={180} level="H" className="w-full h-auto max-w-[180px] md:max-w-[200px]" />
                 </div>
-                <div className="text-center space-y-2">
-                  <p className="text-slate-400 font-bold uppercase tracking-widest text-sm">Scan for Details</p>
-                  <p className="text-slate-600 font-medium text-sm">Present this QR code while boarding</p>
+                <div className="text-center space-y-1 md:space-y-2">
+                  <p className="text-slate-400 font-bold uppercase tracking-widest text-[10px] md:text-sm">Scan for Details</p>
+                  <p className="text-slate-600 font-medium text-xs md:text-sm">Present this QR code while boarding</p>
                 </div>
               </div>
             </div>

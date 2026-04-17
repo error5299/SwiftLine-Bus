@@ -20,10 +20,10 @@ export const Footer = () => {
     {
       title: 'Support',
       items: [
-        { label: 'Help Center', path: '/help' },
-        { label: 'Cancel Ticket', path: '/cancel' },
-        { label: 'Tracking', path: '/track-ticket' },
-        { label: 'FAQ', path: '/faq' },
+        { label: 'Support Centre', path: '/help' },
+        { label: 'Cancel Ticket', path: '/help' },
+        { label: 'Tracking', path: '/track' },
+        { label: 'FAQ', path: '/help' },
       ]
     },
     {
@@ -110,19 +110,6 @@ export const Footer = () => {
       <div className="max-w-7xl mx-auto mt-20 pt-8 border-t border-white/10 text-center text-slate-500 text-sm">
         © 2026 SwiftLine Bus Ticketing. All rights reserved.
       </div>
-
-      {/* Floating Action: WhatsApp Button */}
-      <a 
-        href="https://wa.me/8801234567890" 
-        target="_blank" 
-        rel="noopener noreferrer"
-        className="fixed bottom-8 right-8 z-[100] bg-[#25D366] text-white p-4 rounded-full shadow-2xl hover:scale-110 active:scale-95 transition-all group"
-      >
-        <MessageCircle size={32} />
-        <span className="absolute right-full mr-4 top-1/2 -translate-y-1/2 bg-white text-slate-900 px-4 py-2 rounded-xl text-sm font-bold shadow-xl opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
-          Chat with Support
-        </span>
-      </a>
     </footer>
   );
 };

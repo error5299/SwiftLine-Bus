@@ -194,6 +194,34 @@
         "role": { "type": "string" }
       },
       "required": ["customId", "password", "name", "role"]
+    },
+    "Feedback": {
+      "title": "Feedback",
+      "description": "User feedback and ratings.",
+      "type": "object",
+      "properties": {
+        "passengerId": { "type": "string" },
+        "tripId": { "type": "string" },
+        "rating": { "type": "number", "minimum": 1, "maximum": 5 },
+        "suggestion": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["rating", "timestamp"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "Passenger notifications and alerts.",
+      "type": "object",
+      "properties": {
+        "passengerId": { "type": "string", "description": "Optional: Specific user ID for targeted alerts" },
+        "type": { "type": "string", "enum": ["delay", "cancellation", "boarding", "general"] },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "tripId": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "readBy": { "type": "array", "items": { "type": "string" }, "description": "User IDs who read this" }
+      },
+      "required": ["type", "title", "message", "timestamp"]
     }
   },
   "firestore": {
@@ -209,6 +237,8 @@
     "/bookings/{bookingId}": { "schema": "Booking", "description": "Bookings collection" },
     "/seatLocks/{lockId}": { "schema": "SeatLock", "description": "Seat locks collection" },
     "/users/{userId}": { "schema": "User", "description": "Users collection for RBAC" },
-    "/admins/{adminId}": { "schema": "Admin", "description": "Admins collection for custom login" }
+    "/admins/{adminId}": { "schema": "Admin", "description": "Admins collection for custom login" },
+    "/feedback/{feedbackId}": { "schema": "Feedback", "description": "User feedback" },
+    "/notifications/{notificationId}": { "schema": "Notification", "description": "Passenger notifications" }
   }
 }

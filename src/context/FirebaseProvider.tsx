@@ -57,11 +57,11 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   useEffect(() => {
     const publicCollections = [
-      'trips', 'counters', 'operators', 'routes', 'buses', 'tripCounterTimes'
+      'trips', 'counters', 'operators', 'routes', 'buses', 'tripCounterTimes', 'notifications'
     ];
     
     const adminCollections = [
-      'bookings', 'notifications', 'security_logs', 'deletedTrips', 
+      'bookings', 'security_logs', 'deletedTrips', 
       'crew', 'passengers', 'tripTemplates', 'counterTimeTemplates'
     ];
 

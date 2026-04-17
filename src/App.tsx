@@ -15,6 +15,7 @@ import { DriverPanel } from './pages/DriverPanel';
 import { AboutUs } from './pages/AboutUs';
 import { Contact } from './pages/Contact';
 import { TrackTicket } from './pages/TrackTicket';
+import { Support } from './pages/Support';
 import { Profile } from './pages/Profile';
 import { Login } from './pages/Login';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -59,6 +60,7 @@ export default function App() {
             <Route path="/driver" element={<DriverPanel />} />
             <Route path="/about" element={<AboutUs />} />
             <Route path="/contact" element={<Contact />} />
+            <Route path="/help" element={<Support />} />
             <Route path="/track" element={<TrackTicket />} />
             <Route path="/profile" element={<Profile />} />
             <Route 
