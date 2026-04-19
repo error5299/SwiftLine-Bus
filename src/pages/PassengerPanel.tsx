@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { db, auth, handleFirestoreError, OperationType } from '../firebase';
 import { collection, onSnapshot, query, where, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { Trip, Route, Bus, Booking, Passenger, Counter, TripCounterTime } from '../types';
@@ -9,13 +10,13 @@ import { useNotification } from '../context/NotificationContext';
 
 import { SeatMap } from '../components/SeatMap';
 import { 
-  Search, MapPin, Calendar, Clock, Bus as BusIcon, ChevronRight, 
+  Search, MapPin, Calendar, Clock, Bus as BusIcon, ChevronRight, ChevronLeft,
   CheckCircle2, Download, Map as MapIcon, Navigation, 
   Wifi, Coffee, Zap, Info, ArrowLeftRight, LocateFixed, Star,
   Filter, Sun, Moon, CloudSun, CreditCard, Ticket, X,
   Plus, Edit2, Trash2, UserCheck, Users, User, Smartphone, Wallet, Globe, AlertCircle,
   ChevronDown, ChevronUp, Printer, Phone, Mail, Map as MapIcon_, ShieldCheck, Shield, Check, Lock as LockIcon,
-  Bell, MessageSquare, LifeBuoy, ThumbsUp, Star as StarIcon
+  Bell, MessageSquare, LifeBuoy, ThumbsUp, Star as StarIcon, LogOut, History as HistoryIcon
 } from 'lucide-react';
 import { format, addDays, isSameDay, parseISO } from 'date-fns';
 import { formatInTimeZone } from 'date-fns-tz';
@@ -31,6 +32,7 @@ interface PassengerPanelProps {
 const EMPTY_ARRAY: any[] = [];
 
 export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking }) => {
+  const navigate = useNavigate();
   const { t } = useLanguage();
   const data = useFirebaseData();
   const { addNotification } = useNotification();
@@ -43,6 +45,7 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
   const [feedbackSuggestion, setFeedbackSuggestion] = useState('');
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
   const [readNotifications, setReadNotifications] = useState<string[]>([]);
+  const [activeTab, setActiveTab] = useState<'home' | 'tickets' | 'profile' | 'tracking'>('home');
 
   const trips = data.trips || EMPTY_ARRAY;
   const routes = data.routes || EMPTY_ARRAY;
@@ -627,11 +630,11 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
   };
 
   return (
-    <div className="min-h-screen w-full bg-[#DEF2F1] selection:bg-accent selection:text-white font-sans">
+    <div className="min-h-screen w-full bg-[#DEF2F1] selection:bg-accent selection:text-white font-sans pb-24 md:pb-0">
       <div className="fixed inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(58,175,169,0.1)_0%,transparent_70%)] pointer-events-none" />
       
       {/* Floating Action Buttons for Policy & Feedback */}
-      <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3">
+      <div className="fixed bottom-24 md:bottom-6 right-6 z-50 flex flex-col gap-3">
         <button 
           onClick={() => setShowPolicyModal(true)}
           className="w-12 h-12 bg-white text-primary rounded-full shadow-2xl flex items-center justify-center hover:scale-110 active:scale-95 transition-all border border-slate-100 group"
@@ -662,11 +665,15 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
           font-variant-numeric: tabular-nums;
         }
       `}</style>
-      {/* Hero Section */}
-      <section className="relative py-12 md:py-24 bg-primary overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-primary/20 to-primary/40" />
+      
+      {/* Home Tab */}
+      <div className={activeTab === 'home' ? 'block' : 'hidden'}>
+        {/* Hero Section */}
+        <section className="relative py-12 md:py-24 bg-primary overflow-hidden">
+          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-primary/20 to-primary/40" />
         
         <div className="relative w-full text-center space-y-12">
+          {/* ... Hero Content ... */}
           <div className="space-y-4 px-4 md:px-8">
             <h1 className="text-3xl md:text-6xl font-bold tracking-tighter text-white leading-tight">
               Travel <span className="text-accent">Beyond</span> Limits With <span className="text-accent">SwiftLine</span>
@@ -678,6 +685,7 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
 
           {/* Search Box */}
           <div className="bg-white p-8 md:p-12 rounded-[3rem] shadow-[0_30px_60px_rgba(0,0,0,0.1)] grid grid-cols-1 md:grid-cols-10 gap-8 items-center relative mt-10 border border-slate-100 w-full max-w-[96%] mx-auto">
+            {/* ... Search Fields ... */}
             <div className="md:col-span-2 text-left relative px-2">
               <label className="block text-xs font-black text-slate-400 uppercase tracking-[0.2em] mb-3 ml-4">From</label>
               <div className="relative group">
@@ -764,103 +772,69 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
         </div>
       </section>
 
+      {/* Promotional Banners & Features (Only visible before search) */}
+      {!hasSearched && (
+        <section className="max-w-7xl mx-auto px-4 md:px-8 py-12 space-y-12">
+          {/* Quick Actions / Features */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
+            {[
+              { icon: MapIcon, title: "Explore Maps", desc: "View all routes visually", color: "bg-blue-500", light: "bg-blue-50" },
+              { icon: Ticket, title: "My Tickets", desc: "Manage your bookings", color: "bg-accent", light: "bg-accent/10", action: () => setActiveTab('tickets') },
+              { icon: Navigation, title: "Live Track", desc: "Find your coach instantly", color: "bg-emerald-500", light: "bg-emerald-50", action: () => setActiveTab('tracking') },
+              { icon: Star, title: "Earn Rewards", desc: "Points for every trip", color: "bg-amber-500", light: "bg-amber-50" }
+            ].map((feature, i) => (
+              <button key={i} onClick={feature.action} className="text-left bg-white p-5 rounded-[2rem] border border-slate-100 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all group flex flex-col gap-4">
+                <div className={cn("w-12 h-12 rounded-[1rem] flex items-center justify-center transition-colors", feature.light, "group-hover:" + feature.color)}>
+                  <feature.icon className={cn("transition-colors", "text-" + feature.color.replace('bg-', ''), "group-hover:text-white")} size={22} />
+                </div>
+                <div>
+                  <h4 className="font-black text-primary text-sm sm:text-base">{feature.title}</h4>
+                  <p className="text-xs text-slate-400 font-bold mt-0.5">{feature.desc}</p>
+                </div>
+              </button>
+            ))}
+          </div>
 
+          {/* Special Offers Banner */}
+          <div className="bg-gradient-to-r from-primary to-slate-900 rounded-[2.5rem] p-8 md:p-12 relative overflow-hidden flex flex-col md:flex-row items-center justify-between gap-8 shadow-2xl">
+            <div className="absolute right-0 top-0 w-64 h-64 bg-accent/20 rounded-full blur-3xl opacity-50" />
+            <div className="relative z-10 space-y-3 text-center md:text-left">
+              <span className="px-3 py-1 bg-white/10 text-accent text-[10px] font-black uppercase tracking-widest rounded-lg border border-white/10 backdrop-blur-sm">Limited Time Offer</span>
+              <h3 className="text-2xl md:text-4xl font-black text-white leading-tight">Get 20% Off Your Next Trip</h3>
+              <p className="text-slate-300 font-medium">Use code <span className="font-mono bg-white/10 px-2 py-0.5 rounded text-white font-bold tracking-widest">SWIFT20</span> at checkout. Valid till weekend.</p>
+            </div>
+            <div className="relative z-10 shrink-0 border-4 border-white/10 rounded-[2rem] p-4 backdrop-blur-md bg-white/5">
+              <QRCodeSVG value="https://swiftline.example/promo/SWIFT20" size={100} bgColor="transparent" fgColor="#fff" />
+            </div>
+          </div>
+        </section>
+      )}
 
-      {/* Modals */}
-      <AnimatePresence>
-        {showCoachModal && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-primary/60 backdrop-blur-sm"
-          >
-            <motion.div 
-              initial={{ scale: 0.9, y: 20 }}
-              animate={{ scale: 1, y: 0 }}
-              className="bg-white rounded-[3rem] p-10 w-full max-w-sm shadow-2xl relative"
-            >
-              <button onClick={() => setShowCoachModal(false)} className="absolute top-6 right-6 p-3 hover:bg-slate-100 rounded-full transition-colors"><X size={24} /></button>
-              <div className="text-center space-y-8">
-                <div className="bg-emerald-100 w-20 h-20 rounded-[1.5rem] flex items-center justify-center mx-auto">
-                  <Navigation className="text-emerald-600" size={36} />
-                </div>
-                <div className="space-y-3">
-                  <h3 className="text-3xl font-black text-primary">Track Your Bus</h3>
-                  <p className="text-slate-400 font-black text-xs uppercase tracking-[0.2em]">Enter your bus coach number</p>
-                </div>
-                <div className="space-y-6">
-                  <input 
-                    type="text" 
-                    placeholder="e.g. SL-101"
-                    className="w-full px-6 py-5 bg-slate-50 border-none rounded-[1.5rem] text-center text-2xl font-black tracking-widest text-primary focus:ring-2 focus:ring-emerald-500/20 transition-all"
-                    value={trackCoachNumber}
-                    onChange={e => setTrackCoachNumber(e.target.value.toUpperCase())}
-                  />
-                  <button onClick={handleCoachTrack} className="w-full py-5 rounded-[1.5rem] bg-emerald-500 text-white font-black shadow-xl shadow-emerald-500/20 hover:scale-[1.02] active:scale-95 transition-all text-lg">
-                    Track Now
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
+      {/* Main Content Area */}
+      {hasSearched && (
+        <div className="max-w-7xl mx-auto px-4 md:px-8 py-12">
+            {/* Search Results... */}
+        </div>
+      )}
+      </div> {/* Close Home Tab */}
 
-        {showTicketModal && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-primary/60 backdrop-blur-sm"
-          >
-            <motion.div 
-              initial={{ scale: 0.9, y: 20 }}
-              animate={{ scale: 1, y: 0 }}
-              className="bg-white rounded-[3rem] p-10 w-full max-w-sm shadow-2xl relative"
-            >
-              <button onClick={() => setShowTicketModal(false)} className="absolute top-6 right-6 p-3 hover:bg-slate-100 rounded-full transition-colors"><X size={24} /></button>
-              <div className="text-center space-y-8">
-                <div className="bg-accent/10 w-20 h-20 rounded-[1.5rem] flex items-center justify-center mx-auto">
-                  <Ticket className="text-accent" size={36} />
-                </div>
-                <div className="space-y-3">
-                  <h3 className="text-3xl font-black text-primary">Track Your Ticket</h3>
-                  <p className="text-slate-400 font-black text-xs uppercase tracking-[0.2em]">Enter your ticket ID</p>
-                </div>
-                <div className="space-y-6">
-                  <div className="space-y-3">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] ml-4">Ticket ID</label>
-                    <input 
-                      type="text" 
-                      placeholder="SL-XXXXXX"
-                      className="w-full px-6 py-4 bg-slate-50 border-none rounded-[1.5rem] text-center text-lg font-black tracking-widest text-primary focus:ring-2 focus:ring-accent/20 transition-all"
-                      value={trackTicketId}
-                      onChange={e => setTrackTicketId(e.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-3">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] ml-4">Phone Number</label>
-                    <input 
-                      type="tel" 
-                      placeholder="01XXXXXXXXX"
-                      className="w-full px-6 py-4 bg-slate-50 border-none rounded-[1.5rem] text-center text-lg font-black tracking-widest text-primary focus:ring-2 focus:ring-accent/20 transition-all"
-                      value={trackPhone}
-                      onChange={e => setTrackPhone(e.target.value)}
-                    />
-                  </div>
-                  <button 
-                    onClick={handleTicketTrack}
-                    disabled={loading}
-                    className="w-full py-5 rounded-[1.5rem] bg-accent text-white font-black shadow-xl shadow-accent/20 hover:scale-[1.02] active:scale-95 transition-all text-lg disabled:opacity-50"
-                  >
-                    {loading ? <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin mx-auto" /> : 'Track Now'}
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* Tickets Tab */}
+      <div className={activeTab === 'tickets' ? 'block pt-24 min-h-[80vh] px-4' : 'hidden'}>
+        <div className="max-w-lg mx-auto bg-white p-8 rounded-[2.5rem] shadow-xl text-center space-y-6">
+          <h2 className="text-2xl font-black text-primary">Your Tickets</h2>
+          <p className="text-slate-500 font-bold text-sm">View and manage all your upcoming and past bookings here.</p>
+          {/* Ticket List Component or logic goes here */}
+        </div>
+      </div>
+      
+      {/* Tracking Tab */}
+      <div className={activeTab === 'tracking' ? 'block pt-24 min-h-[80vh] px-4' : 'hidden'}>
+          <div className="max-w-lg mx-auto bg-white p-8 rounded-[2.5rem] shadow-xl text-center space-y-6">
+            <h2 className="text-2xl font-black text-primary">Live Tracking</h2>
+            <p className="text-slate-500 font-bold text-sm">Enter ticket or coach number to see live location.</p>
+            {/* Tracking UI logic goes here */}
+          </div>
+      </div>
 
       <div className="max-w-7xl mx-auto px-4 md:px-8 py-12">
         {/* Main Content Area */}
@@ -958,48 +932,6 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
 
           {/* Search Results List */}
           <div ref={resultsRef} className={`${showFilters ? 'lg:col-span-3' : 'lg:col-span-4'} space-y-8`}>
-            {/* Quick Action Buttons */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
-              <motion.button
-                whileHover={{ scale: 1.02, y: -5 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={() => setShowTicketModal(true)}
-                className="group bg-white p-8 rounded-[2.5rem] flex items-center justify-between px-10 shadow-sm hover:shadow-xl transition-all duration-500 border border-slate-50"
-              >
-                <div className="flex items-center gap-6">
-                  <div className="bg-accent/10 p-4 rounded-[1.5rem] group-hover:bg-accent transition-colors">
-                    <Ticket className="text-accent group-hover:text-white" size={24} />
-                  </div>
-                  <div className="text-left">
-                    <h3 className="text-lg font-black text-primary">Track Your Ticket</h3>
-                    <p className="text-slate-400 text-[10px] font-black uppercase tracking-[0.2em] mt-1">Real-time status check</p>
-                  </div>
-                </div>
-                <div className="bg-slate-50 p-3 rounded-full group-hover:bg-accent group-hover:text-white transition-all">
-                  <ChevronRight size={20} />
-                </div>
-              </motion.button>
-
-              <motion.button
-                whileHover={{ scale: 1.02, y: -5 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={() => setShowCoachModal(true)}
-                className="group bg-white p-8 rounded-[2.5rem] flex items-center justify-between px-10 shadow-sm hover:shadow-xl transition-all duration-500 border border-slate-50"
-              >
-                <div className="flex items-center gap-6">
-                  <div className="bg-emerald-500/10 p-4 rounded-[1.5rem] group-hover:bg-emerald-500 transition-colors">
-                    <Navigation className="text-emerald-500 group-hover:text-white" size={24} />
-                  </div>
-                  <div className="text-left">
-                    <h3 className="text-lg font-black text-primary">Track Your Bus</h3>
-                    <p className="text-slate-400 text-[10px] font-black uppercase tracking-[0.2em] mt-1">Live location tracking</p>
-                  </div>
-                </div>
-                <div className="bg-slate-50 p-3 rounded-full group-hover:bg-emerald-500 group-hover:text-white transition-all">
-                  <ChevronRight size={20} />
-                </div>
-              </motion.button>
-            </div>
 
 
           <AnimatePresence mode="wait">
@@ -1538,110 +1470,152 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                                     initial={{ opacity: 0, x: 20 }}
                                     animate={{ opacity: 1, x: 0 }}
                                     exit={{ opacity: 0, x: -20 }}
-                                    className="max-w-2xl mx-auto pb-24 lg:pb-0"
+                                    className="max-w-2xl mx-auto w-full lg:pb-0"
                                   >
-                                      <div className="bg-white p-6 sm:p-8 rounded-3xl border border-slate-50 shadow-sm space-y-8 relative overflow-hidden group glossy-overlay">
-                                        <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-accent via-emerald-400 to-accent" />
-                                        <div className="text-center space-y-2">
-                                          <h3 className="text-xl sm:text-2xl font-bold text-primary tracking-tight">Secure Checkout</h3>
-                                          <p className="text-slate-500 font-medium text-xs sm:text-sm">Select your preferred payment method to complete booking</p>
+                                      <div className="bg-white sm:rounded-[2.5rem] sm:border border-slate-100 shadow-xl shadow-slate-200/40 relative overflow-hidden flex flex-col min-h-[100dvh] sm:min-h-0">
+                                        
+                                        {/* Mobile Header */}
+                                        <div className="sm:hidden flex items-center justify-between p-4 border-b border-slate-100 bg-white sticky top-0 z-10">
+                                          <button onClick={() => setBookingStep(2)} className="p-2 text-slate-400 hover:text-slate-600 bg-slate-50 rounded-full transition-colors">
+                                            <ChevronLeft size={20} />
+                                          </button>
+                                          <span className="font-bold text-slate-800 text-sm tracking-widest uppercase">Checkout</span>
+                                          <div className="w-9" /> {/* Spacer */}
                                         </div>
 
-                                        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6">
-                                          {[
-                                            { id: 'bKash', label: 'bKash', color: 'bg-[#D12053]', icon: Smartphone },
-                                            { id: 'Nagad', label: 'Nagad', color: 'bg-[#F7941D]', icon: Wallet },
-                                            { id: 'Card', label: 'Card', color: 'bg-primary', icon: CreditCard },
-                                          ].map(method => (
-                                            <button
-                                              key={method.id}
-                                              onClick={() => setPaymentMethod(method.id)}
-                                              className={cn(
-                                                "p-4 sm:p-6 rounded-2xl border-2 transition-all duration-300 flex flex-col items-center gap-3 relative overflow-hidden group",
-                                                paymentMethod === method.id 
-                                                  ? "border-accent bg-accent/5 scale-100 sm:scale-105 shadow-md" 
-                                                  : "border-slate-100 bg-slate-50 hover:border-slate-200 hover:bg-white"
-                                              )}
-                                            >
-                                              <div className={cn("w-12 h-12 sm:w-14 sm:h-14 rounded-2xl flex items-center justify-center text-white shadow-md transition-transform duration-300 group-hover:scale-105", method.color)}>
-                                                <method.icon size={24} />
-                                              </div>
-                                              <span className="font-bold text-slate-700 uppercase tracking-widest text-[10px] sm:text-xs">{method.label}</span>
-                                              {paymentMethod === method.id && (
-                                                <motion.div 
-                                                  initial={{ scale: 0 }}
-                                                  animate={{ scale: 1 }}
-                                                  className="absolute top-2 right-2 sm:top-3 sm:right-3 text-accent"
-                                                >
-                                                  <CheckCircle2 size={20} fill="currentColor" className="text-accent bg-white rounded-full" />
-                                                </motion.div>
-                                              )}
-                                            </button>
-                                          ))}
-                                        </div>
+                                        {/* Top Accent Line */}
+                                        <div className="hidden sm:block absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-accent via-emerald-400 to-accent" />
+                                        
+                                        <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-8 space-y-6 sm:space-y-8 bg-slate-50/50 sm:bg-transparent pb-32 sm:pb-8">
+                                          
+                                          <div className="hidden sm:block text-center space-y-2">
+                                            <h3 className="text-2xl font-black text-primary tracking-tight">Secure Checkout</h3>
+                                            <p className="text-slate-500 font-medium text-sm">Select your preferred payment method</p>
+                                          </div>
 
-                                         <div className="bg-slate-50/70 p-5 sm:p-8 rounded-3xl border border-slate-100 backdrop-blur-sm space-y-6">
-                                          {bookingError && (
-                                            <div className="bg-red-50 text-red-600 p-4 rounded-xl text-sm font-bold border border-red-100 flex items-center justify-between">
-                                              <span>{bookingError}</span>
-                                              <button onClick={() => setBookingError(null)} className="text-red-400 hover:text-red-700"><X size={16}/></button>
+                                          {/* Summary Card */}
+                                          <div className="bg-white p-5 rounded-3xl sm:rounded-[2rem] border border-slate-100 shadow-sm relative overflow-hidden">
+                                            <div className="absolute top-0 right-0 p-4 opacity-5">
+                                              <LockIcon size={100} />
                                             </div>
-                                          )}
-                                          <div className="space-y-4">
-                                            <div className="flex justify-between items-center text-slate-500 font-medium">
-                                              <span className="text-xs sm:text-sm uppercase tracking-widest text-slate-600">Subtotal</span>
-                                              <span className="text-lg sm:text-xl font-bold text-slate-800 font-num">৳ {selectedSeats.length * (trip.fare || 500)}</span>
-                                            </div>
-                                            <div className="flex justify-between items-center text-slate-500 font-medium">
-                                              <span className="text-xs sm:text-sm uppercase tracking-widest text-slate-600">Processing Fee</span>
-                                              <span className="text-sm font-bold text-emerald-500">FREE</span>
-                                            </div>
-                                            <div className="pt-6 border-t border-slate-200 flex justify-between items-end">
-                                              <div className="space-y-1">
-                                                <span className="text-sm font-bold text-slate-500 uppercase tracking-widest">Total Amount</span>
-                                                <p className="text-slate-400 text-[10px] sm:text-xs">Final price including all charges</p>
+                                            <div className="relative z-10 space-y-3">
+                                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Order Summary</p>
+                                              <div className="flex justify-between items-center text-slate-600">
+                                                <span className="text-xs sm:text-sm font-bold">Seats ({selectedSeats.length})</span>
+                                                <span className="text-sm font-bold font-num">৳ {selectedSeats.length * (trip.fare || 500)}</span>
                                               </div>
-                                              <span className="text-2xl sm:text-3xl font-bold text-accent tracking-tighter font-num leading-none">৳ {selectedSeats.length * (trip.fare || 500)}</span>
+                                              <div className="flex justify-between items-center text-slate-600">
+                                                <span className="text-xs sm:text-sm font-bold">Processing Fee</span>
+                                                <span className="text-[10px] font-black text-emerald-500 bg-emerald-50 px-2 py-1 rounded-md uppercase tracking-wider">FREE</span>
+                                              </div>
+                                              <div className="pt-4 border-t border-slate-100 flex justify-between items-end">
+                                                <span className="text-sm font-bold text-slate-500 uppercase tracking-widest">Total</span>
+                                                <span className="text-2xl font-black text-accent tracking-tighter leading-none">৳ {selectedSeats.length * (trip.fare || 500)}</span>
+                                              </div>
                                             </div>
                                           </div>
 
-                                          <div className="flex items-start sm:items-center gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+                                          {/* Payment Methods */}
+                                          <div className="space-y-3">
+                                            <div className="flex items-center gap-2 px-2 sm:px-0">
+                                              <ShieldCheck size={16} className="text-emerald-500" />
+                                              <h4 className="text-[10px] font-black text-slate-600 uppercase tracking-widest">Payment Method</h4>
+                                            </div>
+                                            <div className="grid grid-cols-3 gap-3">
+                                              {[
+                                                { id: 'bKash', label: 'bKash', color: 'bg-[#E3106D]', text: 'text-[#E3106D]', imgSrc: 'https://freelogopng.com/images/all_img/1656235199bkash-logo-transparent.png', bg: 'bg-[#E3106D]/10' },
+                                                { id: 'Nagad', label: 'Nagad', color: 'bg-[#F7941D]', text: 'text-[#F7941D]', imgSrc: 'https://freelogopng.com/images/all_img/1679248787Nagad-Logo.png', bg: 'bg-[#F7941D]/10' },
+                                                { id: 'Card', label: 'Card', color: 'bg-primary', text: 'text-primary', imgSrc: 'https://toppng.com/uploads/preview/visa-logo-png-11661940047ddydshoojj.png', bg: 'bg-primary/10' },
+                                              ].map(method => (
+                                                <button
+                                                  key={method.id}
+                                                  onClick={() => setPaymentMethod(method.id)}
+                                                  className={cn(
+                                                    "p-3 sm:p-5 rounded-[1.5rem] border-2 transition-all duration-300 relative overflow-hidden flex flex-col items-center justify-center gap-2",
+                                                    paymentMethod === method.id 
+                                                      ? "scale-100 sm:scale-105 shadow-md" 
+                                                      : "border-slate-100 bg-white hover:border-slate-200"
+                                                  )}
+                                                  style={paymentMethod === method.id ? { 
+                                                    borderColor: method.color.match(/bg-\[(#[A-Fa-f0-9]+)\]/)?.[1] || (method.color === 'bg-primary' ? '#001F3F' : '#e2e8f0'),
+                                                    backgroundColor: method.color.match(/bg-\[(#[A-Fa-f0-9]+)\]/)?.[1] ? `${method.color.match(/bg-\[(#[A-Fa-f0-9]+)\]/)?.[1]}15` : (method.color === 'bg-primary' ? '#001F3F15' : '#ffffff')
+                                                  } : {}}
+                                                >
+                                                  <div className={cn(
+                                                    "w-12 h-10 sm:w-16 sm:h-12 flex items-center justify-center transition-all duration-300",
+                                                    paymentMethod === method.id ? "scale-110" : "opacity-60 grayscale"
+                                                  )}>
+                                                    <img src={method.imgSrc} alt={method.label} referrerPolicy="no-referrer" className="w-full h-full object-contain" />
+                                                  </div>
+                                                  <span className={cn(
+                                                    "font-bold uppercase tracking-widest text-[9px] sm:text-[10px]",
+                                                    paymentMethod === method.id ? method.text : "text-slate-500"
+                                                  )}>{method.label}</span>
+                                                  
+                                                  {paymentMethod === method.id && (
+                                                    <div className={cn("absolute top-2 right-2 w-4 h-4 rounded-full flex items-center justify-center text-white", method.color)}>
+                                                      <CheckCircle2 size={10} />
+                                                    </div>
+                                                  )}
+                                                </button>
+                                              ))}
+                                            </div>
+                                          </div>
+
+                                          {bookingError && (
+                                            <motion.div initial={{opacity:0, y:-10}} animate={{opacity:1, y:0}} className="bg-red-50 text-red-600 p-4 rounded-2xl text-[11px] font-bold border border-red-100 flex items-start gap-3">
+                                              <AlertCircle size={16} className="shrink-0 mt-0.5" />
+                                              <span className="flex-1">{bookingError}</span>
+                                              <button onClick={() => setBookingError(null)} className="text-red-400 p-1 hover:bg-red-100 rounded-lg transition-colors"><X size={14}/></button>
+                                            </motion.div>
+                                          )}
+
+                                          <div className="flex items-center gap-3 bg-white p-4 rounded-2xl border border-slate-100 shadow-sm mb-4">
                                             <input 
                                               type="checkbox" 
                                               id="terms"
                                               checked={termsAccepted}
                                               onChange={e => setTermsAccepted(e.target.checked)}
-                                              className="w-5 h-5 sm:w-6 sm:h-6 mt-1 sm:mt-0 rounded accent-accent cursor-pointer border-slate-300"
+                                              className="w-5 h-5 rounded-md accent-accent border-slate-200 cursor-pointer shrink-0"
                                             />
-                                            <label htmlFor="terms" className="text-xs sm:text-sm font-medium text-slate-600 cursor-pointer">
-                                              I agree to the <span className="text-accent hover:underline">Terms of Service</span> and <span className="text-accent hover:underline">Privacy Policy</span>
+                                            <label htmlFor="terms" className="text-[11px] sm:text-xs font-semibold text-slate-600 cursor-pointer flex-1 leading-tight">
+                                              I securely agree to the <span className="text-accent underline decoration-accent/30 decoration-2 underline-offset-2">Terms</span> and <span className="text-accent underline decoration-accent/30 decoration-2 underline-offset-2">Privacy Policy</span>
                                             </label>
                                           </div>
+                                        </div>
 
-                                          <div className="flex flex-col sm:flex-row gap-4 mt-6">
+                                        {/* Bottom Action Bar */}
+                                        <div className="bg-white p-4 sm:p-6 border-t border-slate-100 flex flex-col sm:flex-row gap-3 sm:gap-4 fixed sm:static bottom-0 left-0 w-full z-20 shadow-[0_-10px_40px_rgba(0,0,0,0.05)] sm:shadow-none pb-safe">
+                                          <div className="hidden sm:block flex-1">
                                             <button 
                                               onClick={() => setBookingStep(2)}
-                                              className="w-full sm:flex-1 py-4 bg-white text-slate-600 font-bold rounded-2xl border border-slate-200 hover:bg-slate-50 transition-all active:scale-95 shadow-sm text-sm"
+                                              className="w-full h-full py-4 bg-slate-50 text-slate-600 font-black tracking-widest uppercase text-xs rounded-2xl hover:bg-slate-100 transition-colors"
                                             >
-                                              Go Back
+                                              Back
                                             </button>
+                                          </div>
+                                          <div className="flex-[2]">
                                             <button 
                                               disabled={!termsAccepted || !paymentMethod || loading}
                                               onClick={() => handleBooking()}
-                                              className="w-full sm:flex-[2] py-4 bg-accent text-white font-bold rounded-2xl shadow-lg shadow-accent/20 hover:scale-[1.01] active:scale-95 disabled:opacity-50 disabled:hover:scale-100 transition-all flex items-center justify-center gap-2 relative overflow-hidden group text-sm sm:text-base"
+                                              className="w-full py-4 sm:py-5 bg-accent text-white font-black rounded-2xl shadow-xl shadow-accent/20 hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-50 disabled:hover:translate-y-0 transition-all flex items-center justify-center gap-3 text-sm sm:text-base tracking-widest relative overflow-hidden group"
                                             >
+                                              <div className="absolute inset-0 bg-white/20 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000 ease-out" />
                                               {loading ? (
-                                                <div className="w-6 h-6 border-4 border-white/30 border-t-white rounded-full animate-spin" />
+                                                <div className="flex items-center gap-3">
+                                                  <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                                  <span>Processing...</span>
+                                                </div>
                                               ) : (
                                                 <>
-                                                  <div className="absolute inset-0 bg-white/20 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000" />
-                                                  <LockIcon size={24} />
-                                                  Pay Securely Now
+                                                  <span>Pay ৳{selectedSeats.length * (trip.fare || 500)}</span>
+                                                  <LockIcon size={16} className="opacity-80" />
                                                 </>
                                               )}
                                             </button>
                                           </div>
                                         </div>
+
                                       </div>
                                   </motion.div>
                                 )}
@@ -1668,6 +1642,75 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
           ) : null}
         </AnimatePresence>
       </div>
+    </div>
+    </div> {/* Close Home Tab block */}
+
+     {/* Profile Tab */}
+    <div className={activeTab === 'profile' ? 'block pt-24 min-h-[80vh]' : 'hidden'}>
+       <div className="space-y-12 pb-20">
+      {/* Header */}
+      <section className="relative py-20 px-8 rounded-[2.5rem] overflow-hidden bg-primary text-white">
+        <div className="absolute inset-0 opacity-20">
+          <img src="https://picsum.photos/seed/profile/1920/1080" alt="Profile" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+        </div>
+        <div className="relative flex flex-col md:flex-row items-center gap-8 max-w-4xl mx-auto">
+          <div className="w-32 h-32 rounded-full border-4 border-white/20 overflow-hidden shadow-2xl">
+            <img src={auth.currentUser?.photoURL || `https://ui-avatars.com/api/?name=${auth.currentUser?.displayName}`} alt="Avatar" className="w-full h-full object-cover" />
+          </div>
+          <div className="text-center md:text-left space-y-2">
+            <h1 className="text-4xl font-black tracking-tighter">{auth.currentUser?.displayName}</h1>
+            <div className="flex flex-wrap justify-center md:justify-start gap-4 text-white/70 font-medium">
+              <span className="flex items-center gap-2"><Mail size={16} /> {auth.currentUser?.email}</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div className="grid lg:grid-cols-3 gap-12">
+        {/* Stats & Profile Details */}
+        <div className="lg:col-span-1 space-y-8">
+          <div className="card-premium space-y-8">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xl font-black text-primary">Profile Details</h3>
+            </div>
+
+            <div className="space-y-4">
+              <div className="space-y-1">
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Full Name</p>
+                <p className="text-sm font-bold text-slate-800">{auth.currentUser?.displayName}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Email Address</p>
+                <p className="text-sm font-bold text-slate-800">{auth.currentUser?.email}</p>
+              </div>
+            </div>
+            
+            <div className="space-y-4 pt-4 border-t border-slate-100">
+              <button 
+                onClick={() => auth.signOut()}
+                className="w-full py-4 px-6 bg-red-50 text-red-600 font-bold rounded-xl flex items-center justify-between hover:bg-red-100 transition-all"
+              >
+                <div className="flex items-center gap-3">
+                  <LogOut size={18} />
+                  Logout
+                </div>
+                <ChevronRight size={16} />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Booking History */}
+        <div className="lg:col-span-2 space-y-8">
+          <div className="flex items-center justify-between">
+            <h3 className="text-2xl font-black text-primary flex items-center gap-3">
+              <HistoryIcon className="text-accent" />
+              Booking History
+            </h3>
+          </div>
+        </div>
+      </div>
+     </div>
     </div>
 
 
@@ -1984,7 +2027,43 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Mobile Bottom Navigation */}
+      <nav className="md:hidden fixed bottom-0 left-0 w-full bg-white/90 backdrop-blur-xl border-t border-slate-200/50 pb-safe z-50 rounded-t-3xl shadow-[0_-10px_40px_rgba(0,0,0,0.05)]">
+        <div className="flex items-center justify-around px-2 py-2">
+          <button onClick={() => { setActiveTab('home'); setShowTicketModal(false); setShowCoachModal(false); }} className="flex flex-col items-center gap-1 w-16 relative">
+            {activeTab === 'home' && <motion.div layoutId="nav-pill" className="absolute -top-2 w-1 h-1 rounded-full bg-accent" />}
+            <div className={cn("p-2 rounded-2xl transition-all duration-200", activeTab === 'home' ? "bg-accent text-white" : "text-slate-400")}>
+              <Search size={22} />
+            </div>
+            <span className={cn("text-[8px] font-black uppercase tracking-wider", activeTab === 'home' ? "text-accent" : "text-slate-400")}>Search</span>
+          </button>
+          
+          <button onClick={() => { setActiveTab('tickets'); setShowTicketModal(true); setShowCoachModal(false); }} className="flex flex-col items-center gap-1 w-16 relative">
+            {activeTab === 'tickets' && <motion.div layoutId="nav-pill" className="absolute -top-2 w-1 h-1 rounded-full bg-accent" />}
+            <div className={cn("p-2 rounded-2xl transition-all duration-200", activeTab === 'tickets' ? "bg-accent text-white" : "text-slate-400")}>
+              <Ticket size={22} />
+            </div>
+            <span className={cn("text-[8px] font-black uppercase tracking-wider", activeTab === 'tickets' ? "text-accent" : "text-slate-400")}>Tickets</span>
+          </button>
+
+          <button onClick={() => { setActiveTab('tracking'); setShowCoachModal(true); setShowTicketModal(false); }} className="flex flex-col items-center gap-1 w-16 relative">
+            {activeTab === 'tracking' && <motion.div layoutId="nav-pill" className="absolute -top-2 w-1 h-1 rounded-full bg-accent" />}
+            <div className={cn("p-2 rounded-2xl transition-all duration-200", activeTab === 'tracking' ? "bg-accent text-white" : "text-slate-400")}>
+              <Navigation size={22} />
+            </div>
+            <span className={cn("text-[8px] font-black uppercase tracking-wider", activeTab === 'tracking' ? "text-accent" : "text-slate-400")}>Track</span>
+          </button>
+
+          <button onClick={() => navigate('/profile')} className="flex flex-col items-center gap-1 w-16 relative">
+            {activeTab === 'profile' && <motion.div layoutId="nav-pill" className="absolute -top-2 w-1 h-1 rounded-full bg-accent" />}
+            <div className={cn("p-2 rounded-2xl transition-all duration-200", activeTab === 'profile' ? "bg-accent text-white" : "text-slate-400")}>
+              <User size={22} />
+            </div>
+            <span className={cn("text-[8px] font-black uppercase tracking-wider", activeTab === 'profile' ? "text-accent" : "text-slate-400")}>Profile</span>
+          </button>
+        </div>
+      </nav>
     </div>
-  </div>
-);
+  );
 };

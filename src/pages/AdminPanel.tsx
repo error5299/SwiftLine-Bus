@@ -2776,16 +2776,16 @@ export const AdminPanel = () => {
                     </div>
                   </div>
                 </div>
-                <button
-                  onClick={() => { setEditingItem(null); setShowModal(true); }}
-                  className="bg-accent text-white px-8 py-3 rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl shadow-accent/20 hover:scale-105 active:scale-95 transition-all flex items-center gap-3"
-                >
-                  <Plus size={18} />
-                  <span>New Service Line</span>
-                </button>
-              </header>
-
+                
                 <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => { setEditingItem(null); setShowModal(true); }}
+                    className="bg-accent text-white px-8 py-3 rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl shadow-accent/20 hover:scale-105 active:scale-95 transition-all flex items-center gap-3"
+                  >
+                    <Plus size={18} />
+                    <span>New Service Line</span>
+                  </button>
+
                   <div className="bg-white px-5 py-3 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4">
                     <div className="text-right">
                       <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Total Services</p>
@@ -3054,11 +3054,11 @@ export const AdminPanel = () => {
               </div>
             </div>
           )}
-        </div>
-      )}
-    </div>
-  </main>
-</div>
+          </div>
+        )}
+      </div>
+    </main>
+  </div>
 
       {/* Modal for adding/editing - Slide-up Sheet */}
       <AnimatePresence>
