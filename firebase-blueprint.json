@@ -113,22 +113,33 @@
         "crewIds": { "type": "array", "items": { "type": "string" } },
         "date": { "type": "string", "format": "date" },
         "baseDepartureTime": { "type": "string", "description": "Initial departure time from first counter." },
+        "arrivalTime": { "type": "string" },
         "departureTime": { "type": "string", "format": "date-time" },
         "status": { "type": "string", "enum": ["scheduled", "departed", "arrived", "cancelled"] },
         "currentStopIndex": { "type": "number" },
         "fare": { "type": "number", "description": "Base fare for the trip." },
-        "stopLogs": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "counterId": { "type": "string" },
-              "timestamp": { "type": "string", "format": "date-time" }
-            }
-          }
-        }
+        "isActive": { "type": "boolean" },
+        "templateId": { "type": "string" }
       },
       "required": ["routeId", "busId", "date", "baseDepartureTime", "status"]
+    },
+    "TripTemplate": {
+      "title": "Trip Template",
+      "description": "Definitions for recurring trips.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "coachNumber": { "type": "string" },
+        "routeId": { "type": "string" },
+        "busId": { "type": "string" },
+        "baseDepartureTime": { "type": "string" },
+        "fare": { "type": "number" },
+        "repeatDaily": { "type": "boolean" },
+        "isActive": { "type": "boolean" },
+        "boardingPoints": { "type": "array", "items": { "type": "string" } },
+        "droppingPoints": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["name", "coachNumber", "routeId", "busId", "baseDepartureTime", "fare"]
     },
     "TripCounterTime": {
       "title": "Trip Counter Time",
@@ -233,6 +244,7 @@
     "/crew/{crewId}": { "schema": "Crew", "description": "Crew collection" },
     "/passengers/{passengerId}": { "schema": "Passenger", "description": "Passengers collection" },
     "/trips/{tripId}": { "schema": "Trip", "description": "Trips collection" },
+    "/tripTemplates/{templateId}": { "schema": "TripTemplate", "description": "Trip templates collection" },
     "/tripCounterTimes/{timeId}": { "schema": "TripCounterTime", "description": "Trip counter times collection" },
     "/bookings/{bookingId}": { "schema": "Booking", "description": "Bookings collection" },
     "/seatLocks/{lockId}": { "schema": "SeatLock", "description": "Seat locks collection" },

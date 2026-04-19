@@ -188,6 +188,14 @@
   .bg-gradient-primary {
     @apply bg-gradient-to-r from-[#17252A] to-[#2B7A78];
   }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+  .scrollbar-hide {
+    -ms-overflow-style: none; /* IE and Edge */
+    scrollbar-width: none; /* Firefox */
+  }
 }
 
 @layer components {

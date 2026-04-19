@@ -14,12 +14,12 @@ import {
   Wifi, Coffee, Zap, Info, ArrowLeftRight, LocateFixed, Star,
   Filter, Sun, Moon, CloudSun, CreditCard, Ticket, X,
   Plus, Edit2, Trash2, UserCheck, Users, User, Smartphone, Wallet, Globe, AlertCircle,
-  ChevronDown, ChevronUp, Printer, Phone, Mail, Map, ShieldCheck, Shield, Check, Lock as LockIcon,
+  ChevronDown, ChevronUp, Printer, Phone, Mail, Map as MapIcon_, ShieldCheck, Shield, Check, Lock as LockIcon,
   Bell, MessageSquare, LifeBuoy, ThumbsUp, Star as StarIcon
 } from 'lucide-react';
 import { format, addDays, isSameDay, parseISO } from 'date-fns';
 import { formatInTimeZone } from 'date-fns-tz';
-import { safeFormat, safeGetTime } from '../utils/dateUtils';
+import { safeFormat, safeGetTime, formatTimeString, calculateStopTime } from '../utils/dateUtils';
 import { QRCodeSVG, QRCodeCanvas } from 'qrcode.react';
 import { generateTicketPDF, printTicketHTML } from '../utils/ticketGenerator';
 import { motion, AnimatePresence } from 'motion/react';
@@ -27,6 +27,8 @@ import { motion, AnimatePresence } from 'motion/react';
 interface PassengerPanelProps {
   initialTracking?: boolean;
 }
+
+const EMPTY_ARRAY: any[] = [];
 
 export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking }) => {
   const { t } = useLanguage();
@@ -42,12 +44,12 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
   const [readNotifications, setReadNotifications] = useState<string[]>([]);
 
-  const trips = data.trips || [];
-  const routes = data.routes || [];
-  const buses = data.buses || [];
-  const counters = data.counters || [];
-  const operators = data.operators || [];
-  const tripCounterTimes = data.tripCounterTimes || [];
+  const trips = data.trips || EMPTY_ARRAY;
+  const routes = data.routes || EMPTY_ARRAY;
+  const buses = data.buses || EMPTY_ARRAY;
+  const counters = data.counters || EMPTY_ARRAY;
+  const operators = data.operators || EMPTY_ARRAY;
+  const tripCounterTimes = data.tripCounterTimes || EMPTY_ARRAY;
   
   const TZ = 'Asia/Dhaka';
   
@@ -118,20 +120,19 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
 
   // Logic to filter "To" based on "From"
   useEffect(() => {
-    const currentCounters = data.counters || [];
     if (!searchParams.from) {
-      setAvailableDestinations(currentCounters);
+      setAvailableDestinations(counters);
       return;
     }
 
-    const fromCounter = currentCounters.find((c: Counter) => c.id === searchParams.from);
+    const fromCounter = counters.find((c: Counter) => c.id === searchParams.from);
     if (fromCounter && fromCounter.allowedDestinationCounters) {
-      const allowed = currentCounters.filter((c: Counter) => fromCounter.allowedDestinationCounters.includes(c.id));
+      const allowed = counters.filter((c: Counter) => fromCounter.allowedDestinationCounters.includes(c.id));
       setAvailableDestinations(allowed);
     } else {
       setAvailableDestinations([]);
     }
-  }, [searchParams.from, data.counters]);
+  }, [searchParams.from, counters]);
 
   const [searchResults, setSearchResults] = useState<Trip[]>([]);
   const [expandedTripId, setExpandedTripId] = useState<string | null>(null);
@@ -203,14 +204,13 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
   const trackingRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const currentTrips = data.trips || [];
-    if (initialTracking && currentTrips.length > 0) {
-      setTrackingTripId(currentTrips[0].id);
+    if (initialTracking && trips.length > 0) {
+      setTrackingTripId(trips[0].id);
       setTimeout(() => {
         trackingRef.current?.scrollIntoView({ behavior: 'smooth' });
       }, 500);
     }
-  }, [initialTracking, data.trips]);
+  }, [initialTracking, trips]);
 
   useEffect(() => {
     if (selectedTrip?.id) {
@@ -264,57 +264,71 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
   }, [passengerData.phone]);
 
   const handleSearch = useCallback(() => {
-    const currentTrips = data.trips || [];
-    const currentRoutes = data.routes || [];
-    const currentBuses = data.buses || [];
-
-    const results = currentTrips.filter((trip: Trip) => {
-      const route = currentRoutes.find((r: Route) => r.id === trip.routeId);
-      const bus = currentBuses.find((b: Bus) => b.id === trip.busId);
+    const results = trips.filter((trip: Trip) => {
+      const route = routes.find((r: Route) => r.id === trip.routeId);
+      const bus = buses.find((b: Bus) => b.id === trip.busId);
       
       if (!trip.departureTime || isNaN(new Date(trip.departureTime).getTime())) {
-        console.warn("Trip invalid departureTime:", trip);
         return false;
       }
-      
-      const tripDateStr = formatInTimeZone(new Date(trip.departureTime), TZ, 'yyyy-MM-dd');
-      const tripHour = parseInt(formatInTimeZone(new Date(trip.departureTime), TZ, 'HH'));
-      
-      let matchesTime = true;
-      if (searchParams.timeSlot === 'morning') matchesTime = tripHour >= 5 && tripHour < 12;
-      else if (searchParams.timeSlot === 'afternoon') matchesTime = tripHour >= 12 && tripHour < 18;
-      else if (searchParams.timeSlot === 'night') matchesTime = tripHour >= 18 || tripHour < 5;
 
       // Location matching using IDs
       const fromCounterId = searchParams.from;
       const toCounterId = searchParams.to;
       
-      const routeHasFrom = route?.stops.some(s => (typeof s === 'string' ? s : s.counterId) === fromCounterId);
-      const routeHasTo = route?.stops.some(s => (typeof s === 'string' ? s : s.counterId) === toCounterId);
+      // Ensure route has stops and supports counter lookups via the updated RouteStop structure
+      const stops = route?.stops || [];
+      const fromStopIdx = stops.findIndex(s => (typeof s === 'string' ? s : s.counterId) === fromCounterId);
+      const toStopIdx = stops.findIndex(s => (typeof s === 'string' ? s : s.counterId) === toCounterId);
       
-      // Ensure 'from' comes before 'to' in stops
-      let correctOrder = true;
-      if (route && fromCounterId && toCounterId) {
-        const fromIndex = route.stops.findIndex(s => (typeof s === 'string' ? s : s.counterId) === fromCounterId);
-        const toIndex = route.stops.findIndex(s => (typeof s === 'string' ? s : s.counterId) === toCounterId);
-        correctOrder = fromIndex !== -1 && toIndex !== -1 && fromIndex < toIndex;
+      const fromStop = fromStopIdx !== -1 ? stops[fromStopIdx] : null;
+      const toStop = toStopIdx !== -1 ? stops[toStopIdx] : null;
+      
+      // Dynamic timing for this specific trip and counter
+      const tctFound = tripCounterTimes.find((tct: any) => tct.tripId === trip.id && tct.counterId === fromCounterId);
+      const stopBoardingTime = tctFound?.departureTime || (fromStop && typeof fromStop !== 'string' ? fromStop.boardingTime : null);
+      
+      const boardingTimeISO = stopBoardingTime 
+        ? `${trip.date}T${stopBoardingTime}` 
+        : trip.departureTime;
+
+      // Ensure 'from' comes before 'to' in stop order
+      // If no locations selected, it passes. If selected, must be in correct order.
+      const correctOrder = (!fromCounterId || !toCounterId) ? true : (fromStopIdx !== -1 && toStopIdx !== -1 && fromStopIdx < toStopIdx);
+
+      const tripDateStr = formatInTimeZone(new Date(trip.departureTime), TZ, 'yyyy-MM-dd');
+      
+      let matchesTime = true;
+      if (searchParams.timeSlot !== 'all') {
+        const tripHour = parseInt(formatInTimeZone(new Date(boardingTimeISO), TZ, 'HH'));
+        if (searchParams.timeSlot === 'morning') matchesTime = tripHour >= 5 && tripHour < 12;
+        else if (searchParams.timeSlot === 'afternoon') matchesTime = tripHour >= 12 && tripHour < 18;
+        else if (searchParams.timeSlot === 'night') matchesTime = tripHour >= 18 || tripHour < 5;
       }
 
       const isDateMatch = tripDateStr === searchParams.date;
-      const isFuture = new Date(trip.departureTime) > new Date();
+      
+      // Calculate trip departure for today vs search date
+      // We allow trips that are in the future relative to the BOARDING time at the selected counter
+      const now = new Date();
+      const tripBoardingDeparture = new Date(boardingTimeISO);
+      const isFuture = tripBoardingDeparture > now;
       
       return isDateMatch && 
              isFuture &&
+             trip.isActive === true &&
+             trip.isAvailable === true &&
+             route?.status === 'active' &&
              (!searchParams.isAC || bus?.isAC) &&
              matchesTime &&
              trip.status !== 'cancelled' &&
-             (!searchParams.from || routeHasFrom) &&
-             (!searchParams.to || routeHasTo) &&
+             (!searchParams.from || fromStopIdx !== -1) &&
+             (!searchParams.to || toStopIdx !== -1) &&
              correctOrder &&
-             (trip.fare || 500) <= searchParams.priceRange[1];
+             (trip.fare || 500) * (trip.priceMultiplier || 1) <= searchParams.priceRange[1];
     });
     setSearchResults(results);
-  }, [data.trips, data.routes, data.buses, searchParams, TZ]);
+  }, [trips, routes, buses, searchParams, TZ]);
 
   const onSearchClick = () => {
     handleSearch();
@@ -401,7 +415,7 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
         gender: passengerData.gender,
         boardingStopId: selectedBoarding, 
         droppingStopId: selectedDropping, 
-        totalFare: selectedSeats.length * (selectedTrip.fare || 500),
+        totalFare: selectedSeats.length * Math.round((selectedTrip.fare || 500) * (selectedTrip.priceMultiplier || 1)),
         timestamp: new Date().toISOString(),
         status: 'confirmed',
         bookedByCounterId: 'online',
@@ -1017,23 +1031,52 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                   </button>
                 </div>
 
+                {/* Search Result Cards */}
                 <div className="grid gap-6">
-                {searchResults.map(trip => {
-                  const route = routes.find(r => r.id === trip.routeId);
-                  const bus = buses.find(b => b.id === trip.busId);
-                  const tripDate = new Date(trip.departureTime);
-                  const isValidTripDate = !isNaN(tripDate.getTime());
+                {(() => {
+                  const safeRoutes = Array.isArray(routes) ? routes : EMPTY_ARRAY;
+                  const safeBuses = Array.isArray(buses) ? buses : EMPTY_ARRAY;
+                  const safeCounters = Array.isArray(counters) ? counters : EMPTY_ARRAY;
                   
-                  // Boarding point: User requested to show first counter of the route for the summary card
-                  const boardingId = route?.orderedCounterList?.[0] || '';
-                  // Dropping point: User requested to show last counter of the route for the summary card
-                  const droppingId = route?.orderedCounterList?.[route.orderedCounterList.length - 1] || '';
+                  // Use object lookups instead of Map for better compatibility in this environment
+                  const routesLookup: Record<string, any> = {};
+                  safeRoutes.forEach((r: any) => { if (r.id) routesLookup[r.id] = r; });
                   
-                  const boardingTimeData = tripCounterTimes.find(t => t.tripId === trip.id && t.counterId === boardingId);
-                  const droppingTimeData = tripCounterTimes.find(t => t.tripId === trip.id && t.counterId === droppingId);
+                  const busesLookup: Record<string, any> = {};
+                  safeBuses.forEach((b: any) => { if (b.id) busesLookup[b.id] = b; });
                   
-                  const boardingCounter = counters.find(c => c.id === boardingId);
-                  const droppingCounter = counters.find(c => c.id === droppingId);
+                  const countersLookup: Record<string, any> = {};
+                  safeCounters.forEach((c: any) => { if (c.id) countersLookup[c.id] = c; });
+
+                  return searchResults.map(trip => {
+                    const route = routesLookup[trip.routeId];
+                    const bus = busesLookup[trip.busId];
+                    const tripDate = new Date(trip.departureTime);
+                    const isValidTripDate = !isNaN(tripDate.getTime());
+                    
+                    const boardingId = searchParams.from || route?.orderedCounterList?.[0] || '';
+                    const droppingId = searchParams.to || route?.orderedCounterList?.[route.orderedCounterList.length - 1] || '';
+                    
+                    const fromStop = route?.stops?.find((s: any) => (typeof s === 'string' ? s : s.counterId) === boardingId);
+                    const toStop = route?.stops?.find((s: any) => (typeof s === 'string' ? s : s.counterId) === droppingId);
+                    
+                    const fromTct = (data.tripCounterTimes || []).find((tct: any) => tct.tripId === trip.id && tct.counterId === boardingId);
+                    const toTct = (data.tripCounterTimes || []).find((tct: any) => tct.tripId === trip.id && tct.counterId === droppingId);
+
+                    const stopBoardingTime = fromTct?.departureTime || (fromStop && typeof fromStop !== 'string' && fromStop.boardingTime ? fromStop.boardingTime : null);
+                    const stopDroppingTime = toTct?.arrivalTime || (toStop && typeof toStop !== 'string' && toStop.arrivalTime ? toStop.arrivalTime : null);
+
+                    const tripDateStr = trip.date || formatInTimeZone(new Date(trip.departureTime), TZ, 'yyyy-MM-dd');
+                    const boardingTimeStr = stopBoardingTime 
+                      ? `${tripDateStr}T${stopBoardingTime}` 
+                      : trip.departureTime;
+                      
+                    const droppingTimeStr = stopDroppingTime 
+                      ? `${tripDateStr}T${stopDroppingTime}`
+                      : (trip.arrivalTime ? `${tripDateStr}T${trip.arrivalTime}` : trip.departureTime);
+
+                    const boardingCounter = countersLookup[boardingId];
+                    const droppingCounter = countersLookup[droppingId];
 
                   return (
                     <motion.div 
@@ -1058,10 +1101,10 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                           <div className="flex items-center justify-between gap-4">
                             <div className="flex flex-col">
                                <p className="text-xl sm:text-2xl font-black text-primary font-num leading-none">
-                                 {boardingTimeData ? safeFormat(boardingTimeData.departureTime, 'hh:mm') : (isValidTripDate ? formatInTimeZone(tripDate, TZ, 'hh:mm') : '--:--')}
+                                 {boardingTimeStr ? formatTimeString(boardingTimeStr).split(' ')[0] : '--:--'}
                                </p>
                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter mt-1">
-                                 {boardingTimeData ? safeFormat(boardingTimeData.departureTime, 'a') : (isValidTripDate ? formatInTimeZone(tripDate, TZ, 'a') : 'AM')}
+                                 {boardingTimeStr ? formatTimeString(boardingTimeStr).split(' ')[1] : 'AM'}
                                </p>
                                <p className="text-[11px] font-bold text-slate-700 truncate mt-2 max-w-[80px] sm:max-w-[120px]">{boardingCounter?.name || route?.name?.split(' - ')[0] || 'Origin'}</p>
                              </div>
@@ -1079,10 +1122,10 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
 
                             <div className="flex flex-col items-end">
                               <p className="text-xl sm:text-2xl font-black text-primary font-num leading-none">
-                                {droppingTimeData ? safeFormat(droppingTimeData.arrivalTime, 'hh:mm') : '--:--'}
+                                {droppingTimeStr ? formatTimeString(droppingTimeStr).split(' ')[0] : '--:--'}
                               </p>
                               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter mt-1">
-                                {droppingTimeData ? safeFormat(droppingTimeData.arrivalTime, 'a') : 'PM'}
+                                {droppingTimeStr ? formatTimeString(droppingTimeStr).split(' ')[1] : 'PM'}
                               </p>
                               <p className="text-[11px] font-bold text-slate-700 truncate mt-2 max-w-[80px] sm:max-w-[120px]">{droppingCounter?.name || route?.name?.split(' - ')[1] || 'Destination'}</p>
                             </div>
@@ -1097,10 +1140,19 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                         <div className="flex flex-row md:flex-col items-center md:items-end justify-between md:justify-center gap-4 shrink-0">
                           <div className="text-left md:text-right">
                             <p className="text-[9px] text-slate-400 uppercase font-black tracking-widest mb-0.5">Seat Fare</p>
-                            <p className="text-2xl sm:text-3xl font-black text-accent tracking-tighter leading-none"><span className="font-num">৳ {trip.fare || 500}</span></p>
+                            <p className="text-2xl sm:text-3xl font-black text-accent tracking-tighter leading-none">
+                              <span className="font-num">৳ {Math.round((trip.fare || 500) * (trip.priceMultiplier || 1))}</span>
+                            </p>
+                            {trip.priceMultiplier && trip.priceMultiplier !== 1 && (
+                              <p className="text-[8px] text-orange-500 font-bold uppercase mt-1">
+                                Modified Price ({trip.priceMultiplier}x)
+                              </p>
+                            )}
                           </div>
                           <button 
+                            disabled={trip.allowBooking === false}
                             onClick={(e) => {
+                              if (trip.allowBooking === false) return;
                               setExpandedTripId(expandedTripId === trip.id ? null : trip.id);
                               if (expandedTripId !== trip.id) {
                                 setTimeout(() => {
@@ -1115,13 +1167,15 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                             }}
                             className={cn(
                               "w-auto px-5 sm:px-10 py-3 sm:py-4 rounded-xl text-[11px] sm:text-xs font-black uppercase tracking-[0.1em] transition-all flex items-center justify-center gap-2 shadow-sm active:scale-95",
-                              expandedTripId === trip.id 
-                                ? "bg-slate-900 text-white" 
-                                : "bg-accent text-white hover:bg-accent/90 shadow-lg shadow-accent/10"
+                              trip.allowBooking === false 
+                                ? "bg-slate-100 text-slate-400 cursor-not-allowed border border-slate-200 shadow-none"
+                                : expandedTripId === trip.id 
+                                  ? "bg-slate-900 text-white" 
+                                  : "bg-accent text-white hover:bg-accent/90 shadow-lg shadow-accent/10"
                             )}
                           >
-                            {expandedTripId === trip.id ? 'Close' : 'Select Seat'}
-                            {expandedTripId === trip.id ? <X size={14} /> : <ChevronRight size={14} />}
+                            {trip.allowBooking === false ? 'No Booking' : expandedTripId === trip.id ? 'Close' : 'Select Seat'}
+                            {trip.allowBooking === false ? <LockIcon size={14} /> : expandedTripId === trip.id ? <X size={14} /> : <ChevronRight size={14} />}
                           </button>
                         </div>
                       </div>
@@ -1259,7 +1313,7 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                                               <div className="p-4 sm:p-6 bg-slate-50 rounded-2xl space-y-3 sm:space-y-4 border border-slate-100">
                                                 <div className="flex justify-between text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-widest">
                                                   <span>Seat Fare ({selectedSeats.length}x)</span>
-                                                  <span className="text-primary font-num">৳ {selectedSeats.length * (trip.fare || 500)}</span>
+                                                  <span className="text-primary font-num">৳ {selectedSeats.length * Math.round((trip.fare || 500) * (trip.priceMultiplier || 1))}</span>
                                                 </div>
                                                 <div className="flex justify-between text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-widest">
                                                   <span>Processing Fee</span>
@@ -1267,7 +1321,7 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                                                 </div>
                                                 <div className="pt-4 sm:pt-6 border-t border-slate-200 flex justify-between items-end">
                                                   <span className="text-xs sm:text-sm font-bold text-primary uppercase tracking-widest">Total</span>
-                                                  <span className="text-2xl sm:text-3xl font-bold text-accent font-num tracking-tighter leading-none">৳ {selectedSeats.length * (trip.fare || 500)}</span>
+                                                  <span className="text-2xl sm:text-3xl font-bold text-accent font-num tracking-tighter leading-none">৳ {selectedSeats.length * Math.round((trip.fare || 500) * (trip.priceMultiplier || 1))}</span>
                                                 </div>
                                               </div>
                                               <button 
@@ -1599,7 +1653,8 @@ export const PassengerPanel: React.FC<PassengerPanelProps> = ({ initialTracking 
                       </div>
                     </motion.div>
                   );
-                  })}
+                  })
+                })()}
                 </div>
               </motion.div>
           ) : hasSearched ? (

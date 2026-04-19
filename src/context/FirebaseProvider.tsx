@@ -62,7 +62,7 @@ export const FirebaseProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     
     const adminCollections = [
       'bookings', 'security_logs', 'deletedTrips', 
-      'crew', 'passengers', 'tripTemplates', 'counterTimeTemplates'
+      'crew', 'passengers', 'tripTemplates', 'admins'
     ];
 
     const collectionsToFetch = isAdmin 

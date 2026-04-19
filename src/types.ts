@@ -32,7 +32,11 @@ export interface WalletTransaction {
 export interface RouteStop {
   counterId: string;
   distance: number;
-  travelTime: number; // Minutes from previous stop
+  // Specific times per counter
+  boardingTime: string; // HH:mm
+  departureTime: string;// HH:mm
+  arrivalTime: string;  // HH:mm
+  stopOrder: number;
 }
 
 export interface Route {
@@ -104,15 +108,7 @@ export interface TripTemplate {
   droppingPoints?: string[];
   repeatDaily: boolean;
   activeDays?: number[]; // [0,1,2,3,4,5,6] for Sun-Sat
-}
-
-export interface CounterTimeTemplate {
-  id: string;
-  templateId: string;
-  counterId: string;
-  arrivalTimeOffset: number; // Minutes from baseDepartureTime
-  departureTimeOffset: number; // Minutes from baseDepartureTime
-  isReportingCounter?: boolean;
+  isActive: boolean;
 }
 
 export interface Trip {
@@ -132,6 +128,11 @@ export interface Trip {
   boardingPoints?: string[];
   droppingPoints?: string[];
   repeatDaily?: boolean;
+  isActive: boolean;
+  isAvailable: boolean;
+  priceMultiplier: number;
+  allowBooking: boolean;
+  notes?: string;
   currentLocation?: { lat: number; lng: number; timestamp: string };
   nextStopId?: string;
   emergencyAlert?: { message: string; timestamp: string; type: 'accident' | 'breakdown' | 'traffic' | 'other' };

@@ -38,9 +38,13 @@ export default function App() {
     }
   }, [isAuthReady, user, role, location.pathname, navigate]);
 
+  const hideGlobalUI = [
+    '/admin', '/operator', '/supervisor', '/driver', '/login'
+  ].some(path => location.pathname.startsWith(path));
+
   if (!isAuthReady) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center bg-white">
         <LoadingSpinner />
       </div>
     );
@@ -49,7 +53,7 @@ export default function App() {
   return (
     <ErrorBoundary>
       <div className="min-h-screen bg-bg-off flex flex-col">
-        <Header />
+        {!hideGlobalUI && <Header />}
         <main className="flex-grow">
           <Routes>
             <Route path="/" element={<PassengerPanel />} />
@@ -87,7 +91,7 @@ export default function App() {
             />
           </Routes>
         </main>
-        <Footer />
+        {!hideGlobalUI && <Footer />}
       </div>
     </ErrorBoundary>
   );

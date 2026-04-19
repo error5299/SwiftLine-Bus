@@ -196,12 +196,6 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // Counter Time Templates
-    match /counterTimeTemplates/{id} {
-      allow read: if true;
-      allow write: if isAdmin();
-    }
-
     // Default deny
     match /{path=**} {
       allow read, write: if false;

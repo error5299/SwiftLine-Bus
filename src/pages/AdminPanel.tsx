@@ -1,50 +1,154 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { format } from 'date-fns';
+import { format, subDays, addDays } from 'date-fns';
 import { collection, onSnapshot, addDoc, updateDoc, doc, deleteDoc, query, orderBy, setDoc, serverTimestamp, where, getDocs, getDoc } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { signInWithPopup, GoogleAuthProvider, onAuthStateChanged } from 'firebase/auth';
-import { Counter, Operator, Route, Bus, Crew, Passenger, WalletTransaction, Trip, RouteStop, TripCounterTime, Booking, TripTemplate, CounterTimeTemplate } from '../types';
+import { DndContext, useDraggable, useDroppable, DragOverlay, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
+import { arrayMove, SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { Counter, Operator, Route, Bus, Crew, Passenger, WalletTransaction, Trip, RouteStop, TripCounterTime, Booking, TripTemplate } from '../types';
 import { useLanguage } from '../hooks/useLanguage';
 import { useFirebaseData, useAuth } from '../context/FirebaseProvider';
-import { Plus, Edit2, Trash2, Wallet, Map, Bus as BusIcon, Users, UserCheck, ShieldCheck, Search, X, LogIn, Navigation, LayoutDashboard, TrendingUp, Activity, Clock, LogOut, Globe, Printer, Map as MapIcon, Star, Filter, ChevronRight, Wifi, Coffee, Zap, Info, MapPin, History as HistoryIcon, AlertCircle, Shield, User } from 'lucide-react';
+import { Plus, Edit2, Trash2, Wallet, Map, Bus as BusIcon, Users, UserCheck, ShieldCheck, Search, X, LogIn, Navigation, LayoutDashboard, TrendingUp, Activity, Clock, LogOut, Globe, Printer, Map as MapIcon, Star, Filter, ChevronRight, Wifi, Coffee, Zap, Info, MapPin, History as HistoryIcon, AlertCircle, Shield, User, ChevronLeft, Power, Eye, Lock } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Login } from '../components/Login';
 import { RouteMapper } from '../components/RouteMapper';
 import { SeatMap } from '../components/SeatMap';
 import { generateTicketPDF, printTicketHTML } from '../utils/ticketGenerator';
 import { formatInTimeZone } from 'date-fns-tz';
-import { safeFormat, safeGetTime } from '../utils/dateUtils';
+import { safeFormat, safeGetTime, formatTimeString, subtractMinutes } from '../utils/dateUtils';
 import { RealTimeClock } from '../components/RealTimeClock';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
   LineChart, Line, AreaChart, Area, PieChart, Pie, Cell 
 } from 'recharts';
 
+const SortableStop = ({ stop, index, counter, onRemove, onTravelTimeChange }: { stop: RouteStop, index: number, counter: any, onRemove: () => void, onTravelTimeChange: (val: string) => void }) => {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: stop.counterId + index });
+  const style = { transform: CSS.Transform.toString(transform), transition };
+  
+  return (
+    <div ref={setNodeRef} style={style} className={cn("relative", isDragging && "z-50 opacity-50")}>
+        <div className="p-4 bg-white rounded-2xl border-2 border-primary/20 shadow-sm flex items-center gap-3 min-w-[200px] hover:border-primary transition-all">
+          <div {...attributes} {...listeners} className="cursor-grab text-slate-400">
+            <LayoutDashboard size={16} />
+          </div>
+          <div className="w-8 h-8 bg-primary text-white rounded-lg flex items-center justify-center text-[10px] font-black shrink-0">
+            {index + 1}
+          </div>
+          <div className="flex-1 text-left min-w-0">
+            <p className="text-xs font-black text-slate-800 truncate uppercase">{counter?.name || 'Unknown'}</p>
+            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter">Stop Pt.</p>
+          </div>
+          <button 
+            onClick={onRemove}
+            className="w-6 h-6 bg-red-50 text-red-500 rounded-full flex items-center justify-center hover:bg-red-500 hover:text-white transition-all shadow-sm"
+          >
+            <X size={12} />
+          </button>
+        </div>
+    </div>
+  );
+};
+
+const DraggableItem = ({ id, type, children, data }: { id: string; type: string; children: React.ReactNode; data: any; key?: any }) => {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id,
+    data: { type, ...data },
+  });
+  const style = transform ? {
+    transform: CSS.Translate.toString(transform),
+  } : undefined;
+
+  return (
+    <div ref={setNodeRef} style={style} {...listeners} {...attributes} className={cn("cursor-grab active:cursor-grabbing", isDragging && "opacity-50 blur-[1px]")}>
+      {children}
+    </div>
+  );
+};
+
+const DroppableZone = ({ id, activeType, children }: { id: string; activeType: string | null; children: React.ReactNode }) => {
+  const { setNodeRef, isOver } = useDroppable({
+    id,
+  });
+
+  return (
+    <div 
+      ref={setNodeRef} 
+      className={cn(
+        "min-h-[120px] rounded-[32px] border-2 border-dashed transition-all duration-300 flex flex-col items-center justify-center p-6 text-center",
+        isOver ? "border-accent bg-accent/5 scale-[1.02]" : "border-slate-200 bg-slate-50/50 hover:border-slate-300",
+        activeType && "animate-pulse border-accent/30"
+      )}
+    >
+      {children}
+    </div>
+  );
+};
+
 const TZ = 'Asia/Dhaka';
 
 export const AdminPanel = () => {
-  console.log("AdminPanel rendered");
   const navigate = useNavigate();
   const { t } = useLanguage();
   const { user: authUser, role: authRole, isAdmin: authIsAdmin, isAuthReady: authIsReady } = useAuth();
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'tracking' | 'counters' | 'operators' | 'routes' | 'fleet' | 'crew' | 'passengers' | 'trips' | 'tripHistory' | 'tripCounterTimes' | 'tripTemplates' | 'security' | 'popupSettings'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'tracking' | 'counters' | 'operators' | 'routes' | 'fleet' | 'crew' | 'passengers' | 'trips' | 'tripHistory' | 'tripCounterTimes' | 'security' | 'popupSettings' | 'routeManager' | 'tripCenter'>('dashboard');
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
+    const saved = localStorage.getItem('sidebar_collapsed');
+    return saved ? JSON.parse(saved) : false;
+  });
+
+  useEffect(() => {
+    localStorage.setItem('sidebar_collapsed', JSON.stringify(isSidebarCollapsed));
+  }, [isSidebarCollapsed]);
+
+  const [draggedCounter, setDraggedCounter] = useState<Counter | null>(null);
+  const [routeBuilderStops, setRouteBuilderStops] = useState<RouteStop[]>([]);
+  const [editingRouteId, setEditingRouteId] = useState<string | null>(null);
+  const [counterSearch, setCounterSearch] = useState('');
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+  );
+
+  // handleDragEnd inside AdminPanel
+  const handleDragEnd = (event: any) => {
+    const { active, over } = event;
+    if (!over) return;
+    
+    // Adding counter from resource sidebar
+    if (active.data.current?.type === 'counter') {
+       const counter = active.data.current;
+       setRouteBuilderStops(prev => [...prev, { counterId: counter.id, distance: 0, travelTime: "00:00" }]);
+       return;
+    }
+
+    // Reordering stops within the creation zone
+    if (active.id !== over.id) {
+      setRouteBuilderStops((items) => {
+        const oldIndex = items.findIndex((_, i) => `${items[i].counterId}-${i}` === active.id);
+        const newIndex = items.findIndex((_, i) => `${items[i].counterId}-${i}` === over.id);
+        return arrayMove(items, oldIndex, newIndex);
+      });
+    }
+  };
   const [searchTerm, setSearchTerm] = useState('');
   const data = useFirebaseData();
-  const trips = data.trips || [];
-  const tripTemplates = data.tripTemplates || [];
-  const counterTimeTemplates = data.counterTimeTemplates || [];
-  const bookings = data.bookings || [];
-  const tripCounterTimes = data.tripCounterTimes || [];
-  const counters = data.counters || [];
-  const operators = data.operators || [];
-  const routes = data.routes || [];
-  const buses = data.buses || [];
-  const crew = data.crew || [];
-  const passengers = data.passengers || [];
-  const notifications = data.notifications || [];
-  const securityLogs = data.security_logs || [];
-  const deletedTrips = data.deletedTrips || [];
+  const EMPTY_ARRAY: any[] = [];
+  const trips = data.trips || EMPTY_ARRAY;
+  const tripTemplates = data.tripTemplates || EMPTY_ARRAY;
+  const bookings = data.bookings || EMPTY_ARRAY;
+  const tripCounterTimes = data.tripCounterTimes || EMPTY_ARRAY;
+  const counters = data.counters || EMPTY_ARRAY;
+  const operators = data.operators || EMPTY_ARRAY;
+  const routes = data.routes || EMPTY_ARRAY;
+  const buses = data.buses || EMPTY_ARRAY;
+  const crew = data.crew || EMPTY_ARRAY;
+  const passengers = data.passengers || EMPTY_ARRAY;
+  const notifications = data.notifications || EMPTY_ARRAY;
+  const securityLogs = data.security_logs || EMPTY_ARRAY;
+  const deletedTrips = data.deletedTrips || EMPTY_ARRAY;
   const [showNotifications, setShowNotifications] = useState(false);
   const [securitySettings, setSecuritySettings] = useState({
     ipWhitelisting: false,
@@ -100,6 +204,24 @@ export const AdminPanel = () => {
   const [selectedTripForBookings, setSelectedTripForBookings] = useState<Trip | null>(null);
   const [selectedDate, setSelectedDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
   const [dashboardDate, setDashboardDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
+  const [modalRouteId, setModalRouteId] = useState<string | null>(null);
+  const [uiNotifications, setUiNotifications] = useState<{ id: string; message: string; type: 'success' | 'error' }[]>([]);
+
+  useEffect(() => {
+    if (showModal) {
+      setModalRouteId(editingItem?.routeId || null);
+    } else {
+      setModalRouteId(null);
+    }
+  }, [showModal, editingItem]);
+
+  const addNotification = (message: string, type: 'success' | 'error' = 'success') => {
+    const id = Math.random().toString(36).substr(2, 9);
+    setUiNotifications(prev => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setUiNotifications(prev => prev.filter(n => n.id !== id));
+    }, 3000);
+  };
 
   const chartData = Array.from({ length: 7 }).map((_, i) => {
     const date = new Date();
@@ -126,15 +248,17 @@ export const AdminPanel = () => {
     todayTrips: trips.filter(t => new Date(t.departureTime).toDateString() === new Date().toDateString()).length
   };
 
-  const filteredData = (data: any[]) => {
-    if (!searchTerm) return data;
-    const term = searchTerm.toLowerCase();
-    return data.filter(item => 
-      Object.values(item).some(val => 
-        String(val).toLowerCase().includes(term)
-      )
-    );
-  };
+  const filteredData = useMemo(() => {
+    return (items: any[]) => {
+      if (!searchTerm) return items;
+      const term = searchTerm.toLowerCase();
+      return items.filter(item => 
+        Object.values(item).some(val => 
+          String(val).toLowerCase().includes(term)
+        )
+      );
+    };
+  }, [searchTerm]);
 
   useEffect(() => {
     if (editingItem && activeTab === 'routes') {
@@ -161,71 +285,91 @@ export const AdminPanel = () => {
   };
 
   // Recurring Trip Logic: Automatically generate trips for the next 7 days if repeatDaily is true
-  useEffect(() => {
+  const generateRecurringTrips = useCallback(async (forcedTemplateId?: string) => {
     if (!isAdmin || tripTemplates.length === 0) return;
+    
+    // Ensure "System Sender" or Super Admin exists
+    const superAdminExists = (data.admins || []).some((a: any) => a.customId === 'admin');
+    if (!superAdminExists) {
+      try {
+        await addDoc(collection(db, 'admins'), {
+          customId: 'admin',
+          password: 'admin',
+          name: 'Super Admin',
+          role: 'admin',
+          isSystem: true
+        });
+      } catch (e) {
+        console.error("Error recreating super admin", e);
+      }
+    }
 
-    const generateRecurringTrips = async () => {
-      const recurringTemplates = tripTemplates.filter(t => t.repeatDaily);
-      
-      for (const template of recurringTemplates) {
-        // Generate for the next 7 days
-        for (let i = 0; i < 7; i++) {
-          const targetDate = new Date();
-          targetDate.setDate(targetDate.getDate() + i);
-          
-          const [hours, minutes] = template.baseDepartureTime.split(':').map(Number);
-          targetDate.setHours(hours, minutes, 0, 0);
+    const recurringTemplates = forcedTemplateId 
+      ? tripTemplates.filter(t => t.id === forcedTemplateId)
+      : tripTemplates.filter(t => t.repeatDaily);
+    
+    let generatedCount = 0;
+    
+    for (const template of recurringTemplates) {
+      // Generate for the next 7 days
+      for (let i = 0; i < 7; i++) {
+        const targetDate = new Date();
+        targetDate.setDate(targetDate.getDate() + i);
+        
+        // Active Days Check (0 = Sunday, 1 = Monday, etc.)
+        if (template.activeDays && template.activeDays.length > 0) {
+          if (!template.activeDays.includes(targetDate.getDay())) continue;
+        }
+        
+        const [hours, minutes] = template.baseDepartureTime.split(':').map(Number);
+        targetDate.setHours(hours, minutes, 0, 0);
 
-          const alreadyExists = trips.some(t => 
-            t.templateId === template.id && 
-            new Date(t.date).toDateString() === targetDate.toDateString()
-          );
+        const dateStr = format(targetDate, 'yyyy-MM-dd');
 
-          if (!alreadyExists) {
-            // Check if in blacklist (using coach and time as fallback if templateId not available in blacklist)
-            const isBlacklisted = deletedTrips.some(dt => (dt.templateId === template.id) || (dt.coachNumber === template.coachNumber && dt.baseDepartureTime === template.baseDepartureTime));
-            if (isBlacklisted) continue;
+        const alreadyExists = trips.some(t => 
+          t.templateId === template.id && 
+          t.date === dateStr
+        );
 
-            try {
-              const { id, ...templateData } = template;
-              const newDateStr = format(targetDate, 'yyyy-MM-dd');
-              const newTripRef = await addDoc(collection(db, 'trips'), {
-                ...templateData,
-                templateId: template.id,
-                date: newDateStr,
-                departureTime: `${newDateStr}T${template.baseDepartureTime}`,
-                status: 'scheduled',
-                bookedSeats: []
-              });
-              
-              // Copy counterTimeTemplates to tripCounterTimes
-              const originalCounterTimes = counterTimeTemplates.filter(ct => ct.templateId === template.id);
-              for (const ct of originalCounterTimes) {
-                const { id: ctId, ...ctData } = ct;
-                await addDoc(collection(db, 'tripCounterTimes'), {
-                  tripId: newTripRef.id,
-                  counterId: ctData.counterId,
-                  arrivalTime: ctData.arrivalTimeOffset.toString(),
-                  departureTime: ctData.departureTimeOffset.toString(),
-                  isReportingCounter: ctData.isReportingCounter
-                });
-              }
-              
-              console.log(`Generated recurring trip from template ${template.name} for ${targetDate.toDateString()}`);
-            } catch (err) {
-              console.error("Error generating recurring trip:", err);
-            }
+        if (!alreadyExists) {
+          // Check if in blacklist
+          const isBlacklisted = deletedTrips.some(dt => (dt.templateId === template.id || (dt.coachNumber === template.coachNumber && dt.baseDepartureTime === template.baseDepartureTime)) && dt.date === dateStr);
+          if (isBlacklisted) continue;
+
+          try {
+            const { id, ...templateData } = template;
+            const newTripRef = await addDoc(collection(db, 'trips'), {
+              ...templateData,
+              templateId: template.id,
+              date: dateStr,
+              departureTime: `${dateStr}T${template.baseDepartureTime}`,
+              status: 'scheduled',
+              bookedSeats: [],
+              isActive: false, // Default to inactive per user request
+              isAvailable: false, // Default to hidden per user request
+              allowBooking: template.repeatDaily !== false, 
+              priceMultiplier: template.priceMultiplier || 1.0
+            });
+            generatedCount++;
+          } catch (err) {
+            console.error("Error generating recurring trip:", err);
           }
         }
       }
-    };
+    }
+    if (forcedTemplateId || generatedCount > 0) {
+      // Recurring trips generated
+    }
+    return generatedCount;
+  }, [isAdmin, tripTemplates, trips, deletedTrips]);
 
+  useEffect(() => {
     const timeoutId = setTimeout(() => {
       generateRecurringTrips();
-    }, 3000);
+    }, 5000);
 
     return () => clearTimeout(timeoutId);
-  }, [isAdmin, tripTemplates.length, trips.length, counterTimeTemplates.length, deletedTrips.length]);
+  }, [generateRecurringTrips]);
 
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -290,6 +434,21 @@ export const AdminPanel = () => {
       if (adminData) {
         const adminEmail = adminData.email || `${id}@swiftline.admin`;
         
+        // Ensure "sender" admin also exists if it's the first time
+        if (id === 'admin') {
+          const senderQuery = query(collection(db, 'admins'), where('customId', '==', 'sender'));
+          const senderSnap = await getDocs(senderQuery);
+          if (senderSnap.empty) {
+            await addDoc(collection(db, 'admins'), { 
+              customId: 'sender', 
+              password: 'sender', 
+              name: 'System Sender', 
+              role: 'admin',
+              isSystem: true 
+            });
+          }
+        }
+        
         // Try to sign in with Firebase Auth
         try {
           const userCredential = await signInWithEmailAndPassword(auth, adminEmail, pass);
@@ -353,6 +512,17 @@ export const AdminPanel = () => {
     }
   };
 
+  const uniqueTripsForSelection = useMemo(() => {
+    const sorted = [...trips].sort((a, b) => new Date(b.departureTime).getTime() - new Date(a.departureTime).getTime());
+    const seen = new Set();
+    return sorted.filter(t => {
+      const key = `${t.coachNumber}-${t.routeId}-${t.baseDepartureTime}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [trips]);
+
   if (!isAuthReady) return null;
 
   if (!isAdmin) {
@@ -395,6 +565,50 @@ export const AdminPanel = () => {
     }
   };
 
+  const handleToggleActive = async (collectionName: string, id: string, currentStatus: boolean, item?: any) => {
+    try {
+      const newStatus = !currentStatus;
+      await updateDoc(doc(db, collectionName, id), { isActive: newStatus });
+      await logAdminAction('update_status', collectionName, { id, isActive: newStatus });
+      
+      // Special logic for trips: if a trip's status is toggled, toggle its template and other instances
+      if (collectionName === 'trips' && item?.templateId) {
+        await updateDoc(doc(db, 'tripTemplates', item.templateId), { isActive: newStatus });
+        
+        // Update all OTHER future scheduled trips for this template
+        const now = new Date().toISOString();
+        const q = query(
+          collection(db, 'trips'),
+          where('templateId', '==', item.templateId),
+          where('status', '==', 'scheduled'),
+          where('departureTime', '>', now)
+        );
+        const snapshot = await getDocs(q);
+        for (const tripDoc of snapshot.docs) {
+          if (tripDoc.id !== id) {
+            await updateDoc(tripDoc.ref, { isActive: newStatus });
+          }
+        }
+      }
+      // If a template is toggled, toggle all its future trips
+      if (collectionName === 'tripTemplates') {
+        const now = new Date().toISOString();
+        const q = query(
+          collection(db, 'trips'),
+          where('templateId', '==', id),
+          where('status', '==', 'scheduled'),
+          where('departureTime', '>', now)
+        );
+        const snapshot = await getDocs(q);
+        for (const tripDoc of snapshot.docs) {
+          await updateDoc(tripDoc.ref, { isActive: newStatus });
+        }
+      }
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, collectionName);
+    }
+  };
+
   const handleAddData = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
@@ -412,7 +626,7 @@ export const AdminPanel = () => {
       }
     }
     let data: any = {};
-    let collectionName = activeTab;
+    let collectionName = activeTab === 'routeManager' ? 'routes' : activeTab;
 
     try {
       if (activeTab === 'counters') {
@@ -425,11 +639,16 @@ export const AdminPanel = () => {
           status: formData.get('status') as 'active' | 'inactive' || 'active',
           isReportingCounter: formData.get('isReportingCounter') === 'on',
         };
-      } else if (activeTab === 'routes') {
+      } else if (activeTab === 'routes' || activeTab === 'routeManager') {
+        const enrichedStops = routeStops.map((stop, index) => ({
+          ...stop,
+          stopOrder: index
+        }));
         data = {
           name: formData.get('name') as string,
-          stops: routeStops,
-          orderedCounterList: routeStops.map(s => s.counterId),
+          stops: enrichedStops,
+          orderedCounterList: enrichedStops.map(s => s.counterId),
+          status: 'active'
         };
       } else if (activeTab === 'trips') {
         const selectedBoarding = Array.from(e.currentTarget.querySelectorAll('input[name="boardingPoints"]:checked')).map((el: any) => el.value);
@@ -448,10 +667,65 @@ export const AdminPanel = () => {
           status: 'scheduled',
           currentStopIndex: 0,
           stopLogs: [],
-          repeatDaily: formData.get('repeatDaily') === 'on',
+          repeatDaily: formData.get('repeatDaily') === 'on' || editingItem?.repeatDaily === true,
+          isActive: editingItem ? (formData.get('isActive') === 'on') : false, // Default to false for new trips
+          isAvailable: editingItem ? (formData.get('isAvailable') === 'on') : false, // Default to false for new trips
+          priceMultiplier: Number(formData.get('priceMultiplier')) || 1.0,
+          allowBooking: formData.get('allowBooking') === 'on' || editingItem?.allowBooking === true || !editingItem,
+          notes: formData.get('notes') as string || '',
           boardingPoints: selectedBoarding,
           droppingPoints: selectedDropping,
         };
+
+        if (editingItem && editingItem.templateId) {
+          // Propagate changes to template
+          const templateUpdate = {
+            coachNumber: data.coachNumber,
+            routeId: data.routeId,
+            busId: data.busId,
+            baseDepartureTime: data.baseDepartureTime,
+            fare: data.fare,
+            repeatDaily: data.repeatDaily,
+            isActive: data.isActive,
+            isAvailable: data.isAvailable,
+            priceMultiplier: data.priceMultiplier,
+            allowBooking: data.allowBooking,
+            notes: data.notes,
+            boardingPoints: data.boardingPoints,
+            droppingPoints: data.droppingPoints
+          };
+          await updateDoc(doc(db, 'tripTemplates', editingItem.templateId), templateUpdate);
+
+          // Propagate to all future scheduled trips of this template
+          const now = new Date().toISOString();
+          const q = query(
+            collection(db, 'trips'),
+            where('templateId', '==', editingItem.templateId),
+            where('status', '==', 'scheduled'),
+            where('departureTime', '>', now)
+          );
+          const snapshot = await getDocs(q);
+          for (const tripDoc of snapshot.docs) {
+            if (tripDoc.id !== editingItem.id) {
+              const tripData = tripDoc.data();
+              await updateDoc(tripDoc.ref, {
+                coachNumber: data.coachNumber,
+                routeId: data.routeId,
+                busId: data.busId,
+                baseDepartureTime: data.baseDepartureTime,
+                departureTime: `${tripData.date}T${data.baseDepartureTime}`,
+                fare: data.fare,
+                boardingPoints: data.boardingPoints,
+                droppingPoints: data.droppingPoints,
+                isActive: data.isActive,
+                isAvailable: data.isAvailable,
+                priceMultiplier: data.priceMultiplier,
+                allowBooking: data.allowBooking,
+                notes: data.notes
+              });
+            }
+          }
+        }
 
         if (saveAsTemplate && !editingItem) {
           const templateData = {
@@ -462,11 +736,28 @@ export const AdminPanel = () => {
             baseDepartureTime: data.baseDepartureTime,
             fare: data.fare,
             repeatDaily: data.repeatDaily,
+            isActive: data.isActive,
             boardingPoints: data.boardingPoints,
             droppingPoints: data.droppingPoints
           };
           await addDoc(collection(db, 'tripTemplates'), templateData);
         }
+      } else if (activeTab === 'tripCenter') {
+        data = {
+          name: formData.get('name') as string || `Service ${formData.get('coachNumber')}`,
+          coachNumber: formData.get('coachNumber') as string,
+          routeId: formData.get('routeId') as string,
+          busId: formData.get('busId') as string,
+          baseDepartureTime: formData.get('baseDepartureTime') as string,
+          arrivalTime: formData.get('arrivalTime') as string,
+          fare: Number(formData.get('fare')) || 500,
+          repeatDaily: formData.get('repeatDaily') === 'on',
+          isActive: formData.get('isActive') === 'on',
+          boardingPoints: Array.from(e.currentTarget.querySelectorAll('input[name="boardingPoints"]:checked')).map((el: any) => el.value),
+          droppingPoints: Array.from(e.currentTarget.querySelectorAll('input[name="droppingPoints"]:checked')).map((el: any) => el.value),
+          activeDays: Array.from(e.currentTarget.querySelectorAll('input[name="activeDays"]:checked')).map((el: any) => Number(el.value)),
+        };
+        collectionName = 'tripTemplates';
       } else if (activeTab === 'fleet') {
         collectionName = 'buses';
         data = {
@@ -499,28 +790,6 @@ export const AdminPanel = () => {
           customId: formData.get('customId') as string,
           password: formData.get('password') as string,
         };
-      } else if (activeTab === 'tripTemplates') {
-        const selectedBoarding = Array.from(e.currentTarget.querySelectorAll('input[name="boardingPoints"]:checked')).map((el: any) => el.value);
-        const selectedDropping = Array.from(e.currentTarget.querySelectorAll('input[name="droppingPoints"]:checked')).map((el: any) => el.value);
-        data = {
-          name: formData.get('name') as string,
-          coachNumber: formData.get('coachNumber') as string,
-          routeId: formData.get('routeId') as string,
-          busId: formData.get('busId') as string,
-          baseDepartureTime: formData.get('baseDepartureTime') as string,
-          fare: Number(formData.get('fare')) || 500,
-          repeatDaily: formData.get('repeatDaily') === 'on',
-          boardingPoints: selectedBoarding,
-          droppingPoints: selectedDropping,
-        };
-      } else if (activeTab === 'counterTimeTemplates') {
-        data = {
-          templateId: formData.get('templateId') as string,
-          counterId: formData.get('counterId') as string,
-          arrivalTimeOffset: Number(formData.get('arrivalTimeOffset')) || 0,
-          departureTimeOffset: Number(formData.get('departureTimeOffset')) || 0,
-          isReportingCounter: formData.get('isReportingCounter') === 'on',
-        };
       } else if (activeTab === 'passengers') {
         data = {
           name: formData.get('name') as string,
@@ -536,6 +805,42 @@ export const AdminPanel = () => {
           departureTime: formData.get('departureTime') as string,
           isReportingCounter: formData.get('isReportingCounter') === 'on',
         };
+
+        const selectedTrip = trips.find(t => t.id === data.tripId);
+        if (selectedTrip?.templateId) {
+          // Propagate to all future scheduled trips of this template
+          const now = new Date().toISOString();
+          const q = query(
+            collection(db, 'trips'),
+            where('templateId', '==', selectedTrip.templateId),
+            where('status', '==', 'scheduled'),
+            where('departureTime', '>', now)
+          );
+          const snapshot = await getDocs(q);
+          for (const tripDoc of snapshot.docs) {
+            if (tripDoc.id !== selectedTrip.id) {
+               // Check if a tct already exists for this trip and counter
+               const tctQ = query(
+                 collection(db, 'tripCounterTimes'),
+                 where('tripId', '==', tripDoc.id),
+                 where('counterId', '==', data.counterId)
+               );
+               const tctSnap = await getDocs(tctQ);
+               if (!tctSnap.empty) {
+                 await updateDoc(tctSnap.docs[0].ref, {
+                   arrivalTime: data.arrivalTime,
+                   departureTime: data.departureTime,
+                   isReportingCounter: data.isReportingCounter
+                 });
+               } else {
+                 await addDoc(collection(db, 'tripCounterTimes'), {
+                   ...data,
+                   tripId: tripDoc.id
+                 });
+               }
+            }
+          }
+        }
       }
 
       if (editingItem) {
@@ -612,7 +917,6 @@ export const AdminPanel = () => {
     if (!window.confirm('Are you sure you want to reset live tracking for all active trips?')) return;
     try {
       const activeTrips = trips.filter(t => t.status === 'departed');
-      console.log('Active trips to reset:', activeTrips);
       for (const trip of activeTrips) {
         await updateDoc(doc(db, 'trips', trip.id), {
           currentLocation: null,
@@ -634,7 +938,6 @@ export const AdminPanel = () => {
     if (!window.confirm(`Are you sure you want to reset tracking for trips at this counter?`)) return;
     try {
       const tripsAtCounter = trips.filter(t => t.nextStopId === selectedCounterId);
-      console.log('Trips at counter to reset:', tripsAtCounter);
       for (const trip of tripsAtCounter) {
         await updateDoc(doc(db, 'trips', trip.id), {
           currentLocation: null,
@@ -648,6 +951,67 @@ export const AdminPanel = () => {
     }
   };
 
+  const handleToggleTripSetting = async (tripId: string, field: string, currentValue: any) => {
+    try {
+      const collectionName = 'trips';
+      await updateDoc(doc(db, collectionName, tripId), {
+        [field]: !currentValue
+      });
+      addNotification(`Trip ${field} updated`, 'success');
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'trips');
+    }
+  };
+
+  const handleToggleRecurring = async (tripId: string, currentStatus: boolean, templateId?: string) => {
+    try {
+      const newStatus = !currentStatus;
+      await updateDoc(doc(db, 'trips', tripId), { repeatDaily: newStatus });
+      if (templateId) {
+        await updateDoc(doc(db, 'tripTemplates', templateId), { repeatDaily: newStatus });
+      }
+      addNotification(`Daily repetition ${newStatus ? 'enabled' : 'disabled'}`, 'success');
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'trips/repeatDaily');
+    }
+  };
+
+  const handleToggleTemplateRecurring = async (templateId: string, currentStatus: boolean) => {
+    try {
+      const newStatus = !currentStatus;
+      await updateDoc(doc(db, 'tripTemplates', templateId), { repeatDaily: newStatus });
+      addNotification(`Daily repetition ${newStatus ? 'enabled' : 'disabled'}`, 'success');
+      // Trigger sync immediately if enabled
+      if (newStatus) {
+        setTimeout(() => generateRecurringTrips(templateId), 1000);
+      }
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'tripTemplates/repeatDaily');
+    }
+  };
+
+  const handleUpdateTemplateDays = async (templateId: string, day: number, currentDays: number[] = []) => {
+    try {
+      let newDays = [...currentDays];
+      if (newDays.includes(day)) {
+        newDays = newDays.filter(d => d !== day);
+      } else {
+        newDays.push(day);
+      }
+      await updateDoc(doc(db, 'tripTemplates', templateId), { activeDays: newDays });
+      addNotification(`Service schedule updated`, 'success');
+      // Trigger sync
+      setTimeout(() => generateRecurringTrips(templateId), 1000);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'tripTemplates/days');
+    }
+  };
+
+  const handleSyncAllTemplates = async () => {
+    const count = await generateRecurringTrips();
+    addNotification(`Manual sync complete. Generated ${count} new trips.`, 'success');
+  };
+
   const handleDelete = async (collectionName: string, id: string) => {
     if (collectionName === 'trips') {
       const tripToDelete = trips.find(t => t.id === id);
@@ -658,6 +1022,7 @@ export const AdminPanel = () => {
             templateId: tripToDelete.templateId,
             coachNumber: tripToDelete.coachNumber,
             baseDepartureTime: tripToDelete.baseDepartureTime,
+            date: tripToDelete.date,
             deletedAt: new Date().toISOString()
           });
           // Delete all future scheduled instances
@@ -682,8 +1047,33 @@ export const AdminPanel = () => {
   const confirmDelete = async () => {
     if (!deleteConfirm) return;
     try {
+      // Protection for "sender" / Super Admin system records
+      if (deleteConfirm.collection === 'admins') {
+        const adminToDelete = (data.admins || []).find((a: any) => a.id === deleteConfirm.id);
+        if (adminToDelete?.customId === 'admin' || adminToDelete?.isSystem) {
+          addNotification("System records cannot be deleted.", "error");
+          setDeleteConfirm(null);
+          return;
+        }
+      }
+
+      // If it's a trip, we must blacklist it so the automated logic doesn't recreate it
+      if (deleteConfirm.collection === 'trips') {
+        const tripToDelete = trips.find(t => t.id === deleteConfirm.id);
+        if (tripToDelete) {
+          await addDoc(collection(db, 'deletedTrips'), {
+            templateId: tripToDelete.templateId || null,
+            coachNumber: tripToDelete.coachNumber,
+            baseDepartureTime: tripToDelete.baseDepartureTime,
+            date: tripToDelete.date,
+            deletedAt: new Date().toISOString()
+          });
+        }
+      }
+
       await deleteDoc(doc(db, deleteConfirm.collection, deleteConfirm.id));
       await logAdminAction('delete', deleteConfirm.collection, { id: deleteConfirm.id });
+      addNotification("Item deleted successfully", "success");
       setDeleteConfirm(null);
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, deleteConfirm.collection);
@@ -691,77 +1081,164 @@ export const AdminPanel = () => {
   };
 
   return (
-    <div className="flex flex-col lg:flex-row min-h-screen bg-slate-50/50 -m-4 lg:-m-8">
+    <div className="flex flex-col lg:flex-row min-h-screen bg-bg-off selection:bg-accent/20">
       {/* Sidebar Navigation */}
-      <div className="lg:w-72 glass-hard-dark text-white flex flex-col h-screen sticky top-0 shadow-2xl z-20">
-        <div className="p-8 flex items-center gap-3 group cursor-pointer" onClick={() => navigate('/')}>
-          <div className="bg-white p-2.5 rounded-xl group-hover:scale-110 transition-transform duration-500">
-            <BusIcon className="text-accent" size={24} />
+      <aside className={cn(
+        "glass-hard-dark text-white flex flex-col lg:h-screen lg:sticky lg:top-0 shadow-2xl z-50 transition-all duration-500 relative ring-1 ring-white/10",
+        isSidebarCollapsed ? "lg:w-20" : "lg:w-72"
+      )}>
+        {/* Toggle Button - Redesigned to be a sleek integrated tab */}
+        <button 
+          onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+          className={cn(
+            "absolute -right-3 top-10 bg-accent text-white w-6 h-12 rounded-r-xl shadow-2xl z-[100] flex items-center justify-center hover:w-8 transition-all group border-y border-r border-white/20 hidden lg:flex",
+          )}
+          title={isSidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+        >
+          <motion.div
+            animate={{ rotate: isSidebarCollapsed ? 0 : 180 }}
+            transition={{ type: "spring", stiffness: 300, damping: 20 }}
+          >
+            <ChevronRight size={14} className="stroke-[3]" />
+          </motion.div>
+        </button>
+
+        {/* Logo Section - Fixed Header */}
+        <div className={cn(
+          "p-6 flex items-center gap-4 group cursor-pointer transition-all duration-500 shrink-0 border-b border-white/5 bg-black/10",
+          isSidebarCollapsed && "px-4 justify-center"
+        )} onClick={() => navigate('/')}>
+          <div className="bg-white p-2 rounded-xl group-hover:scale-110 group-hover:rotate-6 transition-all duration-500 shadow-xl shadow-accent/20 shrink-0">
+            <BusIcon className="text-accent" size={20} />
           </div>
-          <div>
-            <h1 className="text-xl font-black uppercase tracking-tighter">SwiftLine</h1>
-            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-white/50 leading-none mt-1">Admin Portal</p>
-          </div>
+          {!isSidebarCollapsed && (
+            <motion.div 
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity: 1, x: 0 }}
+              className="overflow-hidden whitespace-nowrap"
+            >
+              <h1 className="text-lg font-black uppercase tracking-tighter text-white font-sans leading-none flex items-center gap-1">
+                Swift<span className="text-accent">Line</span>
+              </h1>
+              <p className="text-[8px] font-black uppercase tracking-[0.3em] text-accent/60 leading-none mt-1">Command Hub</p>
+            </motion.div>
+          )}
         </div>
 
-        <div className="px-8 mb-6 lg:hidden">
-          <RealTimeClock />
-        </div>
+        {/* Navigation - Scrollable Area */}
+        <div className="flex-1 overflow-y-auto scrollbar-hide py-6 h-full flex flex-col border-r border-white/5">
+          <div className={cn("px-6 mb-8 lg:hidden", isSidebarCollapsed && "lg:hidden")}>
+            <RealTimeClock />
+          </div>
 
-        <nav className="flex-1 px-4 space-y-1 overflow-y-auto pb-8">
-          {[
-            { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-            { id: 'counters', label: 'Counters', icon: Wallet },
-            { id: 'routes', label: 'Routes', icon: Navigation },
-            { id: 'tripTemplates', label: 'Trip Templates', icon: Star },
-            { id: 'counterTimeTemplates', label: 'Counter Time Templates', icon: Clock },
-            { id: 'trips', label: 'Daily Trips', icon: Map },
-            { id: 'tripHistory', label: 'Trip History', icon: Clock },
-            { id: 'tripCounterTimes', label: 'Counter Times', icon: Clock },
-            { id: 'fleet', label: 'Fleet', icon: BusIcon },
-            { id: 'tracking', label: 'Live Tracking', icon: MapPin },
-            { id: 'operators', label: 'Operators', icon: UserCheck },
-            { id: 'crew', label: 'Crew', icon: Users },
-            { id: 'passengers', label: 'Passengers', icon: Users },
-            { id: 'security', label: 'Security', icon: ShieldCheck },
-            { id: 'popupSettings', label: 'Popup Settings', icon: Info },
-          ].map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
+          <nav className={cn(
+            "px-3 space-y-1.5",
+            isSidebarCollapsed && "px-2"
+          )}>
+            {[
+              { id: 'dashboard', label: 'Overview', icon: LayoutDashboard },
+              { id: 'routeManager', label: 'Route Builder', icon: MapIcon },
+              { id: 'tripCenter', label: 'Service Hub', icon: Zap },
+              { id: 'counters', label: 'Counters', icon: Wallet },
+              { id: 'trips', label: 'Active Trips', icon: Map },
+              { id: 'tripHistory', label: 'Archives', icon: Clock },
+              { id: 'fleet', label: 'Fleet Ops', icon: BusIcon },
+              { id: 'tracking', label: 'Live Map', icon: MapPin },
+              { id: 'operators', label: 'Partners', icon: UserCheck },
+              { id: 'crew', label: 'Staffing', icon: Users },
+              { id: 'passengers', label: 'CRM', icon: Users },
+              { id: 'security', label: 'Access Control', icon: ShieldCheck },
+              { id: 'popupSettings', label: 'Notices', icon: Info },
+            ].map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id as any)}
+                className={cn(
+                  "w-full flex items-center rounded-xl font-bold transition-all duration-300 group relative",
+                  isSidebarCollapsed ? "justify-center h-12" : "gap-3 px-4 h-12",
+                  activeTab === tab.id 
+                    ? "bg-accent/10 text-accent shadow-sm border border-accent/20" 
+                    : "text-white/40 hover:bg-white/5 hover:text-white"
+                )}
+              >
+                <tab.icon size={18} className={cn(
+                  "transition-all duration-500 shrink-0",
+                  activeTab === tab.id ? 'scale-110 text-accent drop-shadow-[0_0_8px_rgba(58,175,169,0.5)]' : 'group-hover:scale-110 group-hover:text-white'
+                )} />
+                {!isSidebarCollapsed && (
+                  <motion.span 
+                    initial={{ opacity: 0, x: -5 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    className="text-[11px] font-black uppercase tracking-widest whitespace-nowrap overflow-hidden"
+                  >
+                    {tab.label}
+                  </motion.span>
+                )}
+                
+                {/* Active Indicator dot */}
+                {activeTab === tab.id && !isSidebarCollapsed && (
+                  <div className="absolute left-1 w-1 h-3 bg-accent rounded-full animate-pulse" />
+                )}
+
+                {/* Tooltip for collapsed state */}
+                {isSidebarCollapsed && (
+                  <div className="absolute left-[calc(100%+16px)] px-4 py-3 bg-[#0F172A] text-white text-[10px] font-black uppercase tracking-[0.2em] rounded-xl opacity-0 group-hover:opacity-100 pointer-events-none transition-all -translate-x-3 group-hover:translate-x-0 z-[100] whitespace-nowrap shadow-2xl border border-white/10 ring-1 ring-white/5">
+                    <div className="flex items-center gap-3">
+                       <tab.icon size={14} className="text-accent" />
+                       <div className="h-4 w-px bg-white/10" />
+                       {tab.label}
+                    </div>
+                  </div>
+                )}
+              </button>
+            ))}
+          </nav>
+
+          <div className="flex-1" />
+
+          {/* User Info & Logout Footer */}
+          <div className="p-4 bg-black/20 border-t border-white/5 mt-auto">
+            {!isSidebarCollapsed && (
+              <div className="px-4 py-3 mb-4 bg-white/5 rounded-xl border border-white/5 flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-accent/20 flex items-center justify-center text-accent font-black text-xs shrink-0">
+                  {user?.name?.charAt(0) || 'A'}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[10px] font-black text-white truncate uppercase tracking-tighter">{user?.name || 'Admin'}</p>
+                   <p className="text-[8px] font-bold text-white/40 uppercase tracking-widest">Master Admin</p>
+                </div>
+              </div>
+            )}
+            
+            <button 
+              onClick={handleLogout}
               className={cn(
-                "w-full flex items-center gap-3 px-4 py-3.5 rounded-xl font-bold transition-all duration-300 group",
-                activeTab === tab.id 
-                  ? "bg-white/20 text-white shadow-lg shadow-black/5" 
-                  : "text-white/70 hover:bg-white/10 hover:text-white"
+                "w-full flex items-center rounded-xl font-bold transition-all duration-300 group relative",
+                isSidebarCollapsed ? "justify-center h-12" : "gap-3 px-4 h-11 text-white/40 hover:bg-red-500/10 hover:text-red-400 border border-transparent hover:border-red-500/20"
               )}
             >
-              <tab.icon size={20} className={`transition-transform duration-500 ${activeTab === tab.id ? 'scale-110' : 'group-hover:scale-110'}`} />
-              <span className="text-sm tracking-wide">{tab.label}</span>
-              {activeTab === tab.id && (
-                <div className="ml-auto w-1.5 h-1.5 bg-white rounded-full shadow-[0_0_10px_rgba(255,255,255,0.8)]" />
-              )}
+              <LogOut size={18} className="transition-transform group-hover:-translate-x-1 shrink-0" />
+              {!isSidebarCollapsed && <span className="text-[10px] font-black uppercase tracking-widest">Secure Logout</span>}
+              
+              {isSidebarCollapsed && (
+                  <div className="absolute left-[calc(100%+16px)] px-4 py-3 bg-red-600 text-white text-[10px] font-black uppercase tracking-[0.2em] rounded-xl opacity-0 group-hover:opacity-100 pointer-events-none transition-all -translate-x-3 group-hover:translate-x-0 z-[100] whitespace-nowrap shadow-2xl">
+                    Terminate Session
+                  </div>
+                )}
             </button>
-          ))}
-        </nav>
-
-        <div className="p-4 border-t border-white/10">
-          <button 
-            onClick={handleLogout}
-            className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl font-bold text-white/60 hover:bg-red-500/20 hover:text-red-100 transition-all duration-300 group"
-          >
-            <LogOut size={20} className="group-hover:-translate-x-1 transition-transform" />
-            <span className="text-sm">Logout</span>
-          </button>
+          </div>
         </div>
-      </div>
+      </aside>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0 bg-bg-off">
+      <div className="flex-1 flex flex-col min-w-0">
         {/* Top Header */}
-        <header className="h-20 bg-white border-b border-slate-200 px-8 flex items-center justify-between sticky top-0 z-40">
-          <div className="flex-1 max-w-xl">
-            <h2 className="text-2xl font-black text-slate-800">SwiftLine Admin</h2>
+        <header className="h-20 bg-white/80 backdrop-blur-md border-b border-slate-200/50 px-8 flex items-center justify-between sticky top-0 z-40">
+          <div className="flex-1">
+            <div className="flex items-center gap-3">
+              <div className="h-8 w-1.5 bg-accent rounded-full hidden sm:block" />
+              <h2 className="text-xl font-black text-primary tracking-tight">SwiftLine Command Center</h2>
+            </div>
           </div>
           
           <div className="flex items-center gap-6">
@@ -851,16 +1328,9 @@ export const AdminPanel = () => {
               {activeTab === 'passengers' && 'Passenger Management'}
               {activeTab === 'tracking' && 'Live Tracking'}
               {activeTab === 'security' && 'Security'}
+              {activeTab === 'tripCenter' && 'Trip Center'}
+              {activeTab === 'routeManager' && 'Route Builder'}
             </h2>
-            {activeTab !== 'dashboard' && activeTab !== 'tracking' && activeTab !== 'tripHistory' && activeTab !== 'security' && (
-              <button
-                onClick={() => { setEditingItem(null); setShowModal(true); }}
-                className="bg-accent text-white px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl shadow-accent/20 hover:scale-105 active:scale-95 transition-all flex items-center gap-3"
-              >
-                <Plus size={20} />
-                <span>Add New</span>
-              </button>
-            )}
             {(activeTab === 'trips' || activeTab === 'tripHistory') && (
               <input
                 type="date"
@@ -1014,43 +1484,32 @@ export const AdminPanel = () => {
 
                 <div className="space-y-6">
                   <div className="bg-white p-8 rounded-3xl border border-slate-100 shadow-sm space-y-6">
-                    <h3 className="text-lg font-black uppercase tracking-tight text-slate-800">Quick Actions</h3>
+                    <h3 className="text-lg font-black uppercase tracking-tight text-slate-800">Operational Actions</h3>
                     <div className="space-y-3">
                       <button 
                         onClick={handleResetAllTracking}
                         className="w-full p-4 bg-red-50 text-red-600 rounded-2xl font-black uppercase tracking-widest text-xs flex items-center justify-center gap-3 hover:bg-red-100 transition-all border border-red-100 shadow-sm"
                       >
                         <Activity size={18} />
-                        Reset All Live Updates
+                        Reset Live Updates
                       </button>
                       <button 
-                        onClick={() => setActiveTab('tripTemplates')}
-                        className="w-full p-4 bg-accent/5 text-accent rounded-2xl font-black uppercase tracking-widest text-xs flex items-center justify-center gap-3 hover:bg-accent/10 transition-all border border-accent/10 shadow-sm"
-                      >
-                        <Star size={18} />
-                        Manage Trip Templates
-                      </button>
-                      <button 
-                        onClick={() => { setEditingItem(null); setShowModal(true); setActiveTab('trips'); }}
+                        onClick={() => setActiveTab('routeManager')}
                         className="w-full p-4 bg-primary/5 text-primary rounded-2xl font-black uppercase tracking-widest text-xs flex items-center justify-center gap-3 hover:bg-primary/10 transition-all border border-primary/10 shadow-sm"
                       >
-                        <Plus size={18} />
-                        Create New Daily Trip
+                        <MapIcon size={18} />
+                        Route Builder
                       </button>
-                    </div>
-                  </div>
-
-                  <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
-                    <h3 className="text-sm font-black uppercase tracking-tight text-slate-800 mb-4">Quick Actions</h3>
-                    <div className="grid grid-cols-2 gap-3">
-                      <button onClick={() => setActiveTab('trips')} className="p-4 bg-slate-50 rounded-2xl hover:bg-primary hover:text-white transition-all group text-left">
-                        <Map className="text-primary group-hover:text-white mb-2" size={20} />
-                        <p className="text-xs font-bold">New Trip</p>
-                      </button>
-                      <button onClick={() => setActiveTab('fleet')} className="p-4 bg-slate-50 rounded-2xl hover:bg-primary hover:text-white transition-all group text-left">
-                        <BusIcon className="text-primary group-hover:text-white mb-2" size={20} />
-                        <p className="text-xs font-bold">Add Bus</p>
-                      </button>
+                      <div className="grid grid-cols-2 gap-3 mt-4 pt-4 border-t border-slate-50">
+                        <button onClick={() => setActiveTab('trips')} className="p-4 bg-slate-50 rounded-2xl hover:bg-primary hover:text-white transition-all group text-center">
+                          <Map className="text-primary group-hover:text-white mx-auto mb-2" size={20} />
+                          <p className="text-[10px] font-black uppercase tracking-widest">New Trip</p>
+                        </button>
+                        <button onClick={() => setActiveTab('fleet')} className="p-4 bg-slate-50 rounded-2xl hover:bg-primary hover:text-white transition-all group text-center">
+                          <BusIcon className="text-primary group-hover:text-white mx-auto mb-2" size={20} />
+                          <p className="text-[10px] font-black uppercase tracking-widest">Add Bus</p>
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1059,10 +1518,329 @@ export const AdminPanel = () => {
           )}
 
           {activeTab !== 'dashboard' && (
-            <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden">
+            <div className={cn(
+              (activeTab === 'routeManager' || activeTab === 'tripCenter') ? "space-y-8" : "bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden"
+            )}>
+              {activeTab === 'routeManager' && (
+                <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                  <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                    <div>
+                      <h3 className="text-2xl font-black text-primary uppercase tracking-tight">Route Manager</h3>
+                      <p className="text-slate-500 font-medium">Design custom routes by chaining counters</p>
+                    </div>
+                    <div className="flex gap-3">
+                      <button 
+                        onClick={() => {
+                          setEditingRouteId(null);
+                          setRouteBuilderStops([]);
+                        }}
+                        className="px-6 py-3 bg-slate-100 text-slate-600 rounded-2xl font-bold text-sm hover:bg-slate-200 transition-all"
+                      >
+                        New Route
+                      </button>
+                    </div>
+                  </div>
+
+                  <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                    <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+                      {/* Resource Sidebar */}
+                      <div className="lg:col-span-1 space-y-6">
+                          <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm">
+                            <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Available Counters</h4>
+                            <div className="mb-4">
+                              <input 
+                                type="text"
+                                placeholder="Search counters..."
+                                value={counterSearch}
+                                onChange={(e) => setCounterSearch(e.target.value)}
+                                className="w-full p-2 text-xs border border-slate-200 rounded-xl"
+                              />
+                            </div>
+                            <div className="space-y-3 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
+                              {counters.filter(c => c.name.toLowerCase().includes(counterSearch.toLowerCase())).map(counter => (
+                                <DraggableItem key={counter.id} id={`counter-${counter.id}`} type="counter" data={counter}>
+                                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 flex items-center gap-3 hover:border-primary/30 transition-all shadow-sm">
+                                    <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center text-primary shadow-sm">
+                                      <MapPin size={14} />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <p className="text-xs font-bold text-slate-700 truncate">{counter.name}</p>
+                                      <p className="text-[10px] text-slate-400 font-medium">{counter.location}</p>
+                                    </div>
+                                  </div>
+                                </DraggableItem>
+                              ))}
+                            </div>
+                          </div>
+                      </div>
+
+                      {/* Creation Zone */}
+                      <div className="lg:col-span-3 space-y-6">
+                        <DroppableZone id="creation-zone" activeType={null}>
+                          {routeBuilderStops.length === 0 ? (
+                            <div className="py-12">
+                              <div className="w-20 h-20 bg-primary/5 rounded-full flex items-center justify-center text-primary mx-auto mb-4 animate-bounce">
+                                <Plus size={32} />
+                              </div>
+                              <h4 className="text-lg font-black text-slate-800 uppercase tracking-tight">Drop Counters Here</h4>
+                              <p className="text-slate-500 text-sm font-medium italic">Drag counters from the left to build your route sequence</p>
+                            </div>
+                          ) : (
+                            <div className="w-full space-y-4">
+                              <div className="flex flex-wrap gap-4 items-center justify-center p-4">
+                                {routeBuilderStops.map((stop, index) => {
+                                  const counter = counters.find(c => c.id === stop.counterId);
+                                  return (
+                                    <React.Fragment key={`${stop.counterId}-${index}`}>
+                                      <div className="relative group">
+                                        <div className="p-5 bg-white rounded-[32px] border border-slate-100 shadow-xl shadow-slate-200/50 flex flex-col gap-5 min-w-[280px] hover:border-primary/50 transition-all border-b-4 border-b-primary/10">
+                                          <div className="flex items-center gap-3">
+                                            <div className="w-10 h-10 bg-primary/10 text-primary rounded-2xl flex items-center justify-center text-xs font-black shrink-0 shadow-inner">
+                                              {index + 1}
+                                            </div>
+                                            <div className="flex-1 text-left min-w-0">
+                                              <p className="text-sm font-black text-slate-800 truncate uppercase tracking-tight">{counter?.name || 'Unknown'}</p>
+                                              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Station Point</p>
+                                            </div>
+                                            <button 
+                                              onClick={() => setRouteBuilderStops(prev => prev.filter((_, i) => i !== index))}
+                                              className="w-8 h-8 bg-red-50 text-red-500 rounded-xl flex items-center justify-center hover:bg-red-500 hover:text-white transition-all shadow-sm"
+                                            >
+                                              <Trash2 size={14} />
+                                            </button>
+                                          </div>
+                                          
+                                          <div className="grid grid-cols-3 gap-3">
+                                            <div className="space-y-1.5">
+                                              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block text-center">Arrival</label>
+                                              <div className="relative">
+                                                <input 
+                                                  type="time" 
+                                                  value={stop.arrivalTime || '06:00'}
+                                                  onChange={(e) => {
+                                                    const updated = [...routeBuilderStops];
+                                                    updated[index].arrivalTime = e.target.value;
+                                                    setRouteBuilderStops(updated);
+                                                  }}
+                                                  className="w-full text-xs font-bold p-1.5 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:border-primary transition-colors text-center"
+                                                />
+                                              </div>
+                                            </div>
+                                            <div className="space-y-1.5">
+                                              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block text-center">Depart</label>
+                                              <div className="relative">
+                                                <input 
+                                                  type="time" 
+                                                  value={stop.departureTime || '06:00'}
+                                                  onChange={(e) => {
+                                                    const updated = [...routeBuilderStops];
+                                                    updated[index].departureTime = e.target.value;
+                                                    setRouteBuilderStops(updated);
+                                                  }}
+                                                  className="w-full text-xs font-bold p-1.5 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:border-primary transition-colors text-center"
+                                                />
+                                              </div>
+                                            </div>
+                                            <div className="space-y-1.5">
+                                              <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block text-center">Board</label>
+                                              <div className="relative">
+                                                <input 
+                                                  type="time" 
+                                                  value={stop.boardingTime || '06:00'}
+                                                  onChange={(e) => {
+                                                    const updated = [...routeBuilderStops];
+                                                    updated[index].boardingTime = e.target.value;
+                                                    setRouteBuilderStops(updated);
+                                                  }}
+                                                  className="w-full text-xs font-bold p-1.5 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:border-primary transition-colors text-center"
+                                                />
+                                              </div>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      </div>
+                                      {index < routeBuilderStops.length - 1 && (
+                                        <div className="flex flex-col items-center justify-center mx-1">
+                                          <div className="w-1.5 h-1.5 rounded-full bg-slate-200" />
+                                          <div className="w-[1px] h-8 bg-slate-200 my-1" />
+                                          <Navigation size={14} className="text-primary transform rotate-90" />
+                                          <div className="w-[1px] h-8 bg-slate-200 my-1" />
+                                          <div className="w-1.5 h-1.5 rounded-full bg-slate-200" />
+                                        </div>
+                                      )}
+                                    </React.Fragment>
+                                  );
+                                })}
+                              </div>
+
+                              <div className="pt-8 border-t border-slate-100">
+                                <div className="flex items-center justify-between mb-6">
+                                  <h3 className="text-xl font-black text-slate-800 uppercase tracking-tight">Finalize Design</h3>
+                                  <button
+                                    onClick={() => setRouteBuilderStops([])}
+                                    className="text-[10px] font-black text-slate-400 hover:text-red-500 uppercase tracking-widest transition-colors"
+                                  >
+                                    Reset Design
+                                  </button>
+                                </div>
+                                <form onSubmit={async (e) => {
+                                  e.preventDefault();
+                                  const formData = new FormData(e.currentTarget);
+                                  const name = formData.get('routeName') as string;
+                                  if (!name || routeBuilderStops.length < 2) {
+                                    alert('Please provide a name and at least 2 stops.');
+                                    return;
+                                  }
+
+                                  const routeData = {
+                                    name,
+                                    stops: routeBuilderStops.map((s, idx) => ({
+                                      ...s,
+                                      stopOrder: idx + 1,
+                                      arrivalTime: s.arrivalTime || '06:00',
+                                      departureTime: s.departureTime || '06:00',
+                                      boardingTime: s.boardingTime || '06:00',
+                                      travelTime: s.travelTime || '00:00'
+                                    })),
+                                    orderedCounterList: routeBuilderStops.map(s => s.counterId),
+                                    status: 'active',
+                                    createdAt: new Date().toISOString()
+                                  };
+
+                                  try {
+                                    if (editingRouteId) {
+                                      await updateDoc(doc(db, 'routes', editingRouteId), routeData);
+                                      alert('Route updated successfully!');
+                                    } else {
+                                      await addDoc(collection(db, 'routes'), routeData);
+                                      alert('New route created successfully!');
+                                    }
+                                    setRouteBuilderStops([]);
+                                    setEditingRouteId(null);
+                                    setActiveTab('routes');
+                                  } catch (err) {
+                                    console.error('Error saving route:', err);
+                                    alert('Failed to save route.');
+                                  }
+                                }} className="max-w-md mx-auto space-y-4">
+                                  <div className="space-y-1.5">
+                                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Route Name</label>
+                                    <input 
+                                      name="routeName" 
+                                      required 
+                                      placeholder="e.g. Dhaka - Chittagong Express"
+                                      defaultValue={editingRouteId ? routes.find(r => r.id === editingRouteId)?.name : ''}
+                                      className="input-field" 
+                                    />
+                                  </div>
+                                  <button type="submit" className="w-full bg-primary text-white py-4 rounded-2xl font-black uppercase tracking-[0.2em] text-sm shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all">
+                                    {editingRouteId ? 'Update Route' : 'Create Custom Route'}
+                                  </button>
+                                </form>
+                              </div>
+                            </div>
+                          )}
+                        </DroppableZone>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                          {routes.map(route => (
+                            <div key={route.id} className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all group relative overflow-hidden">
+                              <div className="absolute top-0 right-0 w-32 h-32 -mr-16 -mt-16 bg-primary/5 rounded-full" />
+                              <div className="relative">
+                                <div className="flex justify-between items-start mb-4">
+                                  <div className="w-12 h-12 bg-primary/10 rounded-2xl flex items-center justify-center text-primary">
+                                    <Navigation size={24} />
+                                  </div>
+                                  <div className="flex gap-2 transition-all">
+                                    <button 
+                                      onClick={() => {
+                                        setEditingRouteId(null);
+                                        setRouteBuilderStops(route.stops || []);
+                                      }}
+                                      className="p-2 bg-slate-50 text-slate-400 hover:text-accent rounded-lg transition-colors border border-slate-100" title="Duplicate Route"
+                                    >
+                                      <Star size={16} />
+                                    </button>
+                                    <button 
+                                      onClick={() => {
+                                        setEditingItem({ 
+                                          routeId: route.id, 
+                                          boardingPoints: route.orderedCounterList, 
+                                          droppingPoints: route.orderedCounterList,
+                                          coachNumber: '',
+                                          baseDepartureTime: '06:00',
+                                          fare: 500
+                                        });
+                                        setActiveTab('tripCenter');
+                                        setShowModal(true);
+                                      }}
+                                      className="p-2 bg-accent/10 text-accent hover:bg-accent hover:text-white rounded-lg transition-all shadow-sm border border-accent/20"
+                                      title="Create Service catalog entry"
+                                    >
+                                      <Zap size={16} />
+                                    </button>
+                                    <button 
+                                      onClick={() => setDeleteConfirm({ collection: 'routes', id: route.id })}
+                                      className="p-2 bg-red-50 text-red-500 hover:bg-red-500 hover:text-white rounded-lg transition-colors border border-red-100" title="Delete Route"
+                                    >
+                                      <Trash2 size={16} />
+                                    </button>
+                                    <button 
+                                      onClick={() => {
+                                        setEditingRouteId(route.id);
+                                        setRouteBuilderStops(route.stops || []);
+                                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                                      }}
+                                      className="p-2 bg-slate-50 text-slate-400 hover:text-primary rounded-lg transition-colors border border-slate-100"
+                                      title="Edit Route"
+                                    >
+                                      <Edit2 size={16} />
+                                    </button>
+                                  </div>
+                                </div>
+                                <h4 className="text-sm font-black text-slate-800 uppercase mb-2 truncate">{route.name}</h4>
+                                <div className="space-y-2">
+                                  <div className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase">
+                                    <Clock size={12} />
+                                    <span>{route.stops?.length || 0} Total Stoppages</span>
+                                  </div>
+                                  <div className="flex flex-wrap gap-1 mt-3">
+                                    {route.stops?.slice(0, 3).map((stop: any, idx: number) => {
+                                      const c = counters.find(counter => counter.id === stop.counterId);
+                                      return (
+                                        <span key={idx} className="px-2 py-1 bg-slate-50 border border-slate-100 rounded-lg text-[8px] font-bold text-slate-500">
+                                          {c?.name}
+                                        </span>
+                                      );
+                                    })}
+                                    {route.stops && route.stops.length > 3 && (
+                                      <span className="px-2 py-1 bg-primary/5 text-primary rounded-lg text-[8px] font-bold">+{route.stops.length - 3} More</span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </DndContext>
+                </div>
+              )}
+
               {activeTab === 'counters' && (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left">
+                <div className="space-y-4">
+                  <div className="flex justify-end pr-2">
+                    <button
+                      onClick={() => { setEditingItem(null); setShowModal(true); }}
+                      className="bg-accent text-white px-6 py-2.5 rounded-xl font-bold uppercase tracking-widest text-[10px] shadow-lg shadow-accent/20 hover:scale-105 active:scale-95 transition-all flex items-center gap-2"
+                    >
+                      <Plus size={16} />
+                      <span>Add New Counter</span>
+                    </button>
+                  </div>
+                  <div className="overflow-x-auto bg-white rounded-3xl border border-slate-100 shadow-sm">
+                    <table className="w-full text-left">
                     <thead className="bg-slate-50/50 border-b border-slate-100">
                       <tr className="text-slate-500 text-[10px] font-black uppercase tracking-widest">
                         <th className="px-6 py-4">Name</th>
@@ -1101,7 +1879,8 @@ export const AdminPanel = () => {
                     </tbody>
                   </table>
                 </div>
-              )}
+              </div>
+            )}
 
           {activeTab === 'routes' && (
             <div className="space-y-6">
@@ -1171,6 +1950,18 @@ export const AdminPanel = () => {
                             </span>
                           </td>
                           <td className="px-6 py-4 text-right space-x-2">
+                            <button 
+                              onClick={() => { 
+                                setActiveTab('tripCenter'); 
+                                setEditingItem({ routeId: route.id, coachNumber: '', fare: 500, boardingPoints: route.orderedCounterList, droppingPoints: route.orderedCounterList }); 
+                                setModalRouteId(route.id);
+                                setShowModal(true); 
+                              }} 
+                              className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors group relative"
+                              title="Add Service Line"
+                            >
+                              <Plus size={18} />
+                            </button>
                             <button onClick={() => { setEditingItem(route); setShowModal(true); }} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
                               <Edit2 size={18} />
                             </button>
@@ -1186,199 +1977,213 @@ export const AdminPanel = () => {
             </div>
           )}
 
-          {activeTab === 'tripTemplates' && (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead className="bg-slate-50/50 border-b border-slate-100">
-                  <tr className="text-slate-500 text-[10px] font-black uppercase tracking-widest">
-                    <th className="px-6 py-4">Template Name</th>
-                    <th className="px-6 py-4">Coach ID</th>
-                    <th className="px-6 py-4">Route</th>
-                    <th className="px-6 py-4">Base Time</th>
-                    <th className="px-6 py-4">Repeat</th>
-                    <th className="px-6 py-4 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50">
-                  {filteredData(tripTemplates).map(template => {
-                    const route = routes.find(r => r.id === template.routeId);
-                    return (
-                      <tr key={template.id} className="hover:bg-slate-50/50 transition-colors">
-                        <td className="px-6 py-4 font-bold text-slate-800">{template.name}</td>
-                        <td className="px-6 py-4 font-bold text-accent">{template.coachNumber}</td>
-                        <td className="px-6 py-4 text-sm font-bold text-slate-700">{route?.name || 'Unknown Route'}</td>
-                        <td className="px-6 py-4 text-sm text-slate-500 font-medium">
-                          <div className="flex items-center gap-2">
-                            <Clock size={14} />
-                            {template.baseDepartureTime}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <span className={cn(
-                            "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
-                            template.repeatDaily ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"
-                          )}>
-                            {template.repeatDaily ? 'Daily' : 'Once'}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-right space-x-2">
-                          <button onClick={() => { setEditingItem(template); setShowModal(true); }} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
-                            <Edit2 size={18} />
-                          </button>
-                          <button onClick={() => handleDelete('tripTemplates', template.id)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="Delete Template">
-                            <Trash2 size={18} />
-                          </button>
-                          {template.repeatDaily && (
-                            <button 
-                              onClick={async () => {
-                                if (window.confirm('Are you sure you want to delete all future scheduled trips for this template? History will be preserved.')) {
-                                  await addDoc(collection(db, 'deletedTrips'), {
-                                    templateId: template.id,
-                                    coachNumber: template.coachNumber,
-                                    baseDepartureTime: template.baseDepartureTime,
-                                    deletedAt: new Date().toISOString()
-                                  });
-                                  const now = new Date().toISOString();
-                                  const q = query(
-                                    collection(db, 'trips'), 
-                                    where('templateId', '==', template.id),
-                                    where('status', '==', 'scheduled'),
-                                    where('departureTime', '>', now)
-                                  );
-                                  const snapshot = await getDocs(q);
-                                  for (const doc of snapshot.docs) {
-                                    await deleteDoc(doc.ref);
-                                  }
-                                  alert('All future scheduled trips for this template have been deleted.');
-                                }
-                              }} 
-                              className="p-2 text-orange-600 hover:bg-orange-50 rounded-lg transition-colors"
-                              title="Delete All Recurring Trips"
-                            >
-                              <HistoryIcon size={18} />
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {activeTab === 'counterTimeTemplates' && (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead className="bg-slate-50/50 border-b border-slate-100">
-                  <tr className="text-slate-500 text-[10px] font-black uppercase tracking-widest">
-                    <th className="px-6 py-4">Trip Template</th>
-                    <th className="px-6 py-4">Counter</th>
-                    <th className="px-6 py-4">Arrival Offset (min)</th>
-                    <th className="px-6 py-4">Departure Offset (min)</th>
-                    <th className="px-6 py-4">Reporting</th>
-                    <th className="px-6 py-4 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50">
-                  {filteredData(counterTimeTemplates).map(ctt => {
-                    const template = tripTemplates.find(t => t.id === ctt.templateId);
-                    const counter = counters.find(c => c.id === ctt.counterId);
-                    return (
-                      <tr key={ctt.id} className="hover:bg-slate-50/50 transition-colors">
-                        <td className="px-6 py-4 font-bold text-slate-800">{template?.name || ctt.templateId}</td>
-                        <td className="px-6 py-4 text-sm font-medium text-slate-500">{counter?.name || ctt.counterId}</td>
-                        <td className="px-6 py-4 text-sm text-slate-500">{ctt.arrivalTimeOffset}</td>
-                        <td className="px-6 py-4 text-sm text-slate-500">{ctt.departureTimeOffset}</td>
-                        <td className="px-6 py-4">
-                          <span className={cn(
-                            "px-2 py-1 rounded-full text-[10px] font-black uppercase",
-                            ctt.isReportingCounter ? "bg-emerald-100 text-emerald-600" : "bg-slate-100 text-slate-400"
-                          )}>
-                            {ctt.isReportingCounter ? 'Yes' : 'No'}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-right space-x-2">
-                          <button onClick={() => { setEditingItem(ctt); setShowModal(true); }} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
-                            <Edit2 size={18} />
-                          </button>
-                          <button onClick={() => handleDelete('counterTimeTemplates', ctt.id)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors">
-                            <Trash2 size={18} />
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-
           {activeTab === 'trips' && (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead className="bg-slate-50/50 border-b border-slate-100">
-                  <tr className="text-slate-500 text-[10px] font-black uppercase tracking-widest">
-                    <th className="px-6 py-4">Coach ID</th>
-                    <th className="px-6 py-4">Route</th>
-                    <th className="px-6 py-4">Departure</th>
-                    <th className="px-6 py-4">Arrival</th>
-                    <th className="px-6 py-4">Status</th>
-                    <th className="px-6 py-4 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50">
-                  {filteredData(trips)
-                    .filter(t => t.date === selectedDate)
-                    .sort((a, b) => new Date(a.departureTime).getTime() - new Date(b.departureTime).getTime())
-                    .map(trip => {
-                    const route = routes.find(r => r.id === trip.routeId);
-                    return (
-                      <tr key={trip.id} className="hover:bg-slate-50/50 transition-colors">
-                        <td className="px-6 py-4 font-bold text-accent">{trip.coachNumber}</td>
-                        <td className="px-6 py-4 text-sm font-bold text-slate-700">{route?.name || 'Unknown Route'}</td>
-                        <td className="px-6 py-4 text-sm text-slate-500 font-medium">
-                          <div className="flex items-center gap-2">
-                            <Clock size={14} />
-                            {safeFormat(trip.departureTime, 'hh:mm a, dd MMM')}
+            <div className="space-y-6">
+              <div className="flex flex-wrap items-center justify-between gap-4 bg-white p-6 rounded-[2rem] border border-slate-50 shadow-sm">
+                <div className="flex items-center gap-4">
+                  <div className="bg-accent/10 p-3 rounded-2xl">
+                    <BusIcon className="text-accent" size={24} />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-black text-primary">Trip Management Center</h2>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Active Date: {selectedDate}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-2xl border border-slate-100">
+                    <button onClick={() => setSelectedDate(subDays(new Date(selectedDate), 1).toISOString().split('T')[0])} className="p-2 hover:bg-white hover:shadow-sm rounded-xl transition-all"><ChevronLeft size={18} /></button>
+                    <span className="px-4 font-bold text-sm text-slate-700">{selectedDate}</span>
+                    <button onClick={() => setSelectedDate(addDays(new Date(selectedDate), 1).toISOString().split('T')[0])} className="p-2 hover:bg-white hover:shadow-sm rounded-xl transition-all"><ChevronRight size={18} /></button>
+                  </div>
+                  <button
+                    onClick={() => { setEditingItem(null); setShowModal(true); }}
+                    className="bg-accent text-white px-6 py-2.5 rounded-xl font-bold uppercase tracking-widest text-[10px] shadow-lg shadow-accent/20 hover:scale-105 active:scale-95 transition-all flex items-center gap-2"
+                  >
+                    <Plus size={16} />
+                    <span>Create Manual Trip</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto bg-white rounded-[2rem] border border-slate-50 shadow-sm overflow-hidden">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50/50 border-b border-slate-100">
+                      <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">Coach details</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">Route & Timings</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-center">Indicators</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-center">Quick Toggles</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {filteredData(trips)
+                      .filter(t => t.date === selectedDate)
+                      .sort((a, b) => new Date(a.departureTime).getTime() - new Date(b.departureTime).getTime())
+                      .map(trip => {
+                      const route = routes.find(r => r.id === trip.routeId);
+                      const isPriceModified = trip.priceMultiplier && trip.priceMultiplier !== 1;
+                      
+                      return (
+                        <tr key={trip.id} className="hover:bg-slate-50/20 transition-colors group">
+                          <td className="px-6 py-4">
+                            <div className="space-y-1">
+                              <p className="font-black text-accent text-lg">{trip.coachNumber}</p>
+                              <div className="flex items-center gap-1.5">
+                                <span className="px-1.5 py-0.5 bg-slate-100 text-[8px] font-bold text-slate-500 rounded uppercase">FARE: ৳{trip.fare}</span>
+                                {isPriceModified && (
+                                  <span className="px-1.5 py-0.5 bg-orange-100 text-[8px] font-bold text-orange-600 rounded uppercase">x{trip.priceMultiplier}</span>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="space-y-2">
+                              <div className="flex items-center gap-2 text-sm font-bold text-slate-700">
+                                <MapPin size={12} className="text-slate-400" />
+                                {route?.name}
+                              </div>
+                              <div className="flex items-center gap-4 text-[10px] font-bold text-slate-500">
+                                <div className="flex items-center gap-1">
+                                  <Clock size={10} className="text-emerald-500" />
+                                  DEP: {formatTimeString(trip.departureTime)}
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <div className="flex items-center gap-1">
+                                    <Clock size={10} className="text-amber-500" />
+                                    BOA: {formatTimeString(subtractMinutes(trip.baseDepartureTime, 30))}
+                                  </div>
+                                  <div className="flex items-center gap-1">
+                                    <Clock size={10} className="text-red-500" />
+                                    ARR: {trip.arrivalTime ? formatTimeString(trip.arrivalTime) : '--:--'}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="flex flex-wrap justify-center gap-1.5">
+                              <span className={cn(
+                                "px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest border",
+                                trip.isActive !== false ? "bg-emerald-50 text-emerald-600 border-emerald-100" : "bg-red-50 text-red-600 border-red-100"
+                              )}>
+                                {trip.isActive !== false ? 'Active' : 'Inactive'}
+                              </span>
+                              <span className={cn(
+                                "px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest border",
+                                trip.isAvailable !== false ? "bg-blue-50 text-blue-600 border-blue-100" : "bg-slate-50 text-slate-400 border-slate-100"
+                              )}>
+                                {trip.isAvailable !== false ? 'Available' : 'Hidden'}
+                              </span>
+                              <span className={cn(
+                                "px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest border",
+                                trip.allowBooking !== false ? "bg-purple-50 text-purple-600 border-purple-100" : "bg-slate-50 text-slate-400 border-slate-100"
+                              )}>
+                                {trip.allowBooking !== false ? 'Booking ON' : 'Booking OFF'}
+                              </span>
+                              <span className={cn(
+                                "px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest border",
+                                trip.repeatDaily ? "bg-orange-50 text-orange-600 border-orange-100" : "bg-slate-50 text-slate-400 border-slate-100"
+                              )}>
+                                {trip.repeatDaily ? 'Daily' : 'One-time'}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="flex items-center justify-center gap-1">
+                              <button 
+                                onClick={() => handleToggleActive('trips', trip.id, trip.isActive !== false, trip)}
+                                className={cn(
+                                  "p-2 rounded-xl border transition-all",
+                                  trip.isActive !== false ? "bg-emerald-50 text-emerald-600 border-emerald-100" : "bg-slate-50 text-slate-400 border-slate-100 hover:bg-emerald-50 hover:text-emerald-500"
+                                )}
+                                title="Toggle Active Status"
+                              >
+                                <Power size={14} />
+                              </button>
+                              <button 
+                                onClick={() => handleToggleTripSetting(trip.id, 'isAvailable', trip.isAvailable !== false)}
+                                className={cn(
+                                  "p-2 rounded-xl border transition-all",
+                                  trip.isAvailable !== false ? "bg-blue-50 text-blue-600 border-blue-100" : "bg-slate-50 text-slate-400 border-slate-100 hover:bg-blue-50 hover:text-blue-500"
+                                )}
+                                title="Toggle Visibility"
+                              >
+                                <Eye size={14} />
+                              </button>
+                              <button 
+                                onClick={() => handleToggleTripSetting(trip.id, 'allowBooking', trip.allowBooking !== false)}
+                                className={cn(
+                                  "p-2 rounded-xl border transition-all",
+                                  trip.allowBooking !== false ? "bg-purple-50 text-purple-600 border-purple-100" : "bg-slate-50 text-slate-400 border-slate-100 hover:bg-purple-50 hover:text-purple-500"
+                                )}
+                                title="Toggle Booking Access"
+                              >
+                                <Lock size={14} />
+                              </button>
+                              <button 
+                                onClick={() => handleToggleRecurring(trip.id, !!trip.repeatDaily, trip.templateId)}
+                                className={cn(
+                                  "p-2 rounded-xl border transition-all",
+                                  trip.repeatDaily ? "bg-orange-50 text-orange-600 border-orange-100" : "bg-slate-50 text-slate-400 border-slate-100 hover:bg-orange-50 hover:text-orange-500"
+                                )}
+                                title="Toggle Daily Repeat"
+                              >
+                                <Zap size={14} />
+                              </button>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 text-right">
+                            <div className="flex items-center justify-end gap-1">
+                              {trip.notes && (
+                                <div className="p-2 text-slate-400 relative group/note">
+                                  <Info size={18} />
+                                  <div className="absolute bottom-full right-0 mb-2 w-48 p-2 bg-slate-800 text-white text-[10px] rounded-lg opacity-0 invisible group-hover/note:opacity-100 group-hover/note:visible transition-all z-50">
+                                    {trip.notes}
+                                  </div>
+                                </div>
+                              )}
+                              <button 
+                                onClick={() => setSelectedTripForBookings(trip)}
+                                className="p-3 text-emerald-600 hover:bg-emerald-50 rounded-2xl transition-all"
+                                title="View Bookings"
+                              >
+                                <Users size={18} />
+                              </button>
+                              <button 
+                                onClick={() => { setEditingItem(trip); setShowModal(true); }}
+                                className="p-3 text-blue-600 hover:bg-blue-50 rounded-2xl transition-all"
+                                title="Edit Trip"
+                              >
+                                <Edit2 size={18} />
+                              </button>
+                              <button 
+                                onClick={() => handleDelete('trips', trip.id)}
+                                className="p-3 text-red-600 hover:bg-red-50 rounded-2xl transition-all"
+                                title="Delete Trip"
+                              >
+                                <Trash2 size={18} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {filteredData(trips).filter(t => t.date === selectedDate).length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="px-6 py-20 text-center">
+                          <div className="space-y-4">
+                            <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto">
+                              <BusIcon className="text-slate-200" size={32} />
+                            </div>
+                            <p className="text-slate-400 font-black text-[10px] uppercase tracking-widest">No trips scheduled for this date</p>
                           </div>
-                        </td>
-                        <td className="px-6 py-4 text-sm text-slate-500 font-medium">
-                          <div className="flex items-center gap-2">
-                            <Clock size={14} />
-                            {safeFormat(`${trip.date}T${trip.arrivalTime}`, 'hh:mm a')}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <span className={cn(
-                            "px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
-                            trip.status === 'scheduled' ? "bg-blue-100 text-blue-700" :
-                            trip.status === 'departed' ? "bg-emerald-100 text-emerald-700" :
-                            "bg-red-100 text-red-700"
-                          )}>
-                            {trip.status}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-right space-x-2">
-                          <button 
-                            onClick={() => setSelectedTripForBookings(trip)}
-                            className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
-                            title="View Bookings"
-                          >
-                            <Users size={18} />
-                          </button>
-                          <button onClick={() => { setEditingItem(trip); setShowModal(true); }} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors">
-                            <Edit2 size={18} />
-                          </button>
-                          <button onClick={() => handleDelete('trips', trip.id)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors">
-                            <Trash2 size={18} />
-                          </button>
                         </td>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
 
@@ -1444,8 +2249,18 @@ export const AdminPanel = () => {
           )}
 
           {activeTab === 'fleet' && (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
+            <div className="space-y-4">
+              <div className="flex justify-end pr-2">
+                <button
+                  onClick={() => { setEditingItem(null); setShowModal(true); }}
+                  className="bg-accent text-white px-6 py-2.5 rounded-xl font-bold uppercase tracking-widest text-[10px] shadow-lg shadow-accent/20 hover:scale-105 active:scale-95 transition-all flex items-center gap-2"
+                >
+                  <Plus size={16} />
+                  <span>Register Bus</span>
+                </button>
+              </div>
+              <div className="overflow-x-auto bg-white rounded-3xl border border-slate-100 shadow-sm">
+                <table className="w-full text-left">
                 <thead className="bg-slate-50/50 border-b border-slate-100">
                   <tr className="text-slate-500 text-[10px] font-black uppercase tracking-widest">
                     <th className="px-6 py-4">Reg No</th>
@@ -1480,10 +2295,20 @@ export const AdminPanel = () => {
                 </tbody>
               </table>
             </div>
-          )}
+          </div>
+        )}
 
           {activeTab === 'operators' && (
             <div className="space-y-6">
+              <div className="flex justify-end pr-2">
+                <button
+                  onClick={() => { setEditingItem(null); setShowModal(true); }}
+                  className="bg-accent text-white px-6 py-2.5 rounded-xl font-bold uppercase tracking-widest text-[10px] shadow-lg shadow-accent/20 hover:scale-105 active:scale-95 transition-all flex items-center gap-2"
+                >
+                  <Plus size={16} />
+                  <span>Assign Operator</span>
+                </button>
+              </div>
               <div className="p-4 bg-primary/5 border border-primary/10 rounded-2xl flex items-center gap-4">
                 <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center text-primary">
                   <LogIn size={20} />
@@ -1534,6 +2359,15 @@ export const AdminPanel = () => {
 
           {activeTab === 'crew' && (
             <div className="space-y-6">
+              <div className="flex justify-end pr-2">
+                <button
+                  onClick={() => { setEditingItem(null); setShowModal(true); }}
+                  className="bg-accent text-white px-6 py-2.5 rounded-xl font-bold uppercase tracking-widest text-[10px] shadow-lg shadow-accent/20 hover:scale-105 active:scale-95 transition-all flex items-center gap-2"
+                >
+                  <Plus size={16} />
+                  <span>Add Crew Member</span>
+                </button>
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="p-4 bg-primary/5 border border-primary/10 rounded-2xl flex items-center gap-4">
                   <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center text-primary">
@@ -1758,8 +2592,18 @@ export const AdminPanel = () => {
           )}
 
           {activeTab === 'passengers' && (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
+            <div className="space-y-4">
+              <div className="flex justify-end pr-2">
+                <button
+                  onClick={() => { setEditingItem(null); setShowModal(true); }}
+                  className="bg-accent text-white px-6 py-2.5 rounded-xl font-bold uppercase tracking-widest text-[10px] shadow-lg shadow-accent/20 hover:scale-105 active:scale-95 transition-all flex items-center gap-2"
+                >
+                  <Plus size={16} />
+                  <span>Add Passenger</span>
+                </button>
+              </div>
+              <div className="overflow-x-auto bg-white rounded-3xl border border-slate-100 shadow-sm">
+                <table className="w-full text-left">
                 <thead className="bg-slate-50/50 border-b border-slate-100">
                   <tr className="text-slate-500 text-[10px] font-black uppercase tracking-widest">
                     <th className="px-6 py-4">Name</th>
@@ -1791,7 +2635,8 @@ export const AdminPanel = () => {
                 </tbody>
               </table>
             </div>
-          )}
+          </div>
+        )}
 
           {activeTab === 'tracking' && (
             <div className="grid lg:grid-cols-3 gap-8">
@@ -1917,6 +2762,224 @@ export const AdminPanel = () => {
             </div>
           )}
 
+          {activeTab === 'tripCenter' && (
+            <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-700">
+              <header className="flex flex-col md:flex-row md:items-end justify-between gap-6">
+                <div className="space-y-2">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 bg-accent/10 rounded-2xl flex items-center justify-center">
+                      <Zap className="text-accent" size={24} />
+                    </div>
+                    <div>
+                      <h2 className="text-4xl font-black text-slate-950 uppercase tracking-tighter leading-none">Service Catalog</h2>
+                      <p className="text-slate-500 font-bold text-sm mt-1 uppercase tracking-widest opacity-70">Fleet Automation & Recurring Schedules</p>
+                    </div>
+                  </div>
+                </div>
+                <button
+                  onClick={() => { setEditingItem(null); setShowModal(true); }}
+                  className="bg-accent text-white px-8 py-3 rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl shadow-accent/20 hover:scale-105 active:scale-95 transition-all flex items-center gap-3"
+                >
+                  <Plus size={18} />
+                  <span>New Service Line</span>
+                </button>
+              </header>
+
+                <div className="flex items-center gap-3">
+                  <div className="bg-white px-5 py-3 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-4">
+                    <div className="text-right">
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Total Services</p>
+                      <p className="text-xl font-black text-primary leading-none">{tripTemplates.length}</p>
+                    </div>
+                    <div className="w-px h-8 bg-slate-100" />
+                    <button 
+                      onClick={handleSyncAllTemplates}
+                      className="bg-emerald-500 text-white px-6 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-emerald-500/20 hover:scale-105 active:scale-95 transition-all flex items-center gap-2"
+                    >
+                      <Activity size={14} className="animate-spin-slow" />
+                      Sync Schedules
+                    </button>
+                  </div>
+                </div>
+              </header>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
+                {tripTemplates.map((template) => {
+                  const route = routes.find(r => r.id === template.routeId);
+                  const bus = buses.find(b => b.id === template.busId);
+                  const DAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+                  const activeDays = template.activeDays || [0,1,2,3,4,5,6];
+                  
+                  return (
+                    <div key={template.id} className="group relative bg-white rounded-[2.5rem] border border-slate-100 shadow-sm hover:shadow-2xl hover:shadow-slate-200/50 hover:-translate-y-1 transition-all duration-500 overflow-hidden flex flex-col">
+                      {/* Top Bar Status */}
+                      <div className="p-6 pb-0 flex justify-between items-center">
+                        <div className="flex flex-col">
+                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest opacity-60 mb-1">Service Line</span>
+                          <span className="text-lg font-black text-primary tracking-tight">{template.coachNumber}</span>
+                        </div>
+                        <button
+                          onClick={() => handleToggleActive('tripTemplates', template.id, template.isActive, template)}
+                          className={cn(
+                            "w-10 h-10 rounded-xl flex items-center justify-center border transition-all duration-300",
+                            template.isActive 
+                              ? "bg-emerald-50 text-emerald-600 border-emerald-100" 
+                              : "bg-red-50 text-red-600 border-red-100 shadow-inner"
+                          )}
+                          title={template.isActive ? 'Active' : 'Disabled'}
+                        >
+                          <Power size={18} />
+                        </button>
+                      </div>
+
+                      {/* Route Hero Section */}
+                      <div className="p-6 flex-1">
+                        <div className="bg-slate-50/50 rounded-3xl p-5 border border-slate-100/50 group-hover:bg-accent/5 transition-colors duration-500">
+                          <div className="flex items-center gap-3 mb-4">
+                            <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shadow-sm text-accent group-hover:scale-110 transition-transform">
+                              <MapIcon size={20} />
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Assigned Route</p>
+                              <h4 className="font-bold text-slate-800 truncate leading-tight">{route?.name || 'Undefined Route'}</h4>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="bg-white/80 p-3 rounded-2xl border border-slate-100">
+                              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Time</p>
+                              <div className="flex items-center gap-2 text-primary">
+                                <Clock size={14} className="text-accent" />
+                                <span className="font-black text-sm">{template.baseDepartureTime}</span>
+                              </div>
+                            </div>
+                            <div className="bg-white/80 p-3 rounded-2xl border border-slate-100">
+                              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Fare (Base)</p>
+                              <div className="flex items-center gap-1 text-primary">
+                                <span className="text-accent font-bold text-xs">৳</span>
+                                <span className="font-black text-sm">{template.fare}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Schedule Dots */}
+                        <div className="mt-6 space-y-3">
+                          <div className="flex justify-between items-center">
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Operating Days</p>
+                            <button 
+                              onClick={() => handleToggleTemplateRecurring(template.id, !!template.repeatDaily)}
+                              className={cn(
+                                "text-[9px] font-black uppercase tracking-tighter px-2 py-0.5 rounded",
+                                template.repeatDaily ? "bg-orange-100 text-orange-600" : "bg-slate-100 text-slate-500"
+                              )}
+                            >
+                              {template.repeatDaily ? 'Automation ON' : 'Automation OFF'}
+                            </button>
+                          </div>
+                          <div className="flex justify-between gap-1">
+                            {DAYS.map((day, dIdx) => {
+                              const isActive = activeDays.includes(dIdx);
+                              return (
+                                <button
+                                  key={dIdx}
+                                  onClick={() => handleUpdateTemplateDays(template.id, dIdx, activeDays)}
+                                  className={cn(
+                                    "w-8 h-8 rounded-lg flex items-center justify-center text-[10px] font-black transition-all",
+                                    isActive 
+                                      ? "bg-primary text-white shadow-md shadow-primary/20 scale-110" 
+                                      : "bg-slate-50 text-slate-300 hover:bg-slate-100"
+                                  )}
+                                >
+                                  {day}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Footer Actions */}
+                      <div className="p-4 bg-slate-50/50 border-t border-slate-100 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center text-slate-400 border border-slate-100">
+                            {bus?.isAC ? <Zap size={14} className="text-blue-500" /> : <Coffee size={14} className="text-orange-400" />}
+                          </div>
+                          <span className="text-[10px] font-black text-slate-500 uppercase tracking-tighter leading-none">
+                            {bus?.isAC ? 'AC Coach' : 'Non-AC'}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-1">
+                          <button 
+                            onClick={() => { setEditingItem(template); setShowModal(true); }}
+                            className="p-2.5 text-blue-600 hover:bg-blue-50 rounded-xl transition-all"
+                            title="Edit Service"
+                          >
+                            <Edit2 size={16} />
+                          </button>
+                          <button 
+                            onClick={() => handleDelete('tripTemplates', template.id)}
+                            className="p-2.5 text-red-500 hover:bg-red-50 rounded-xl transition-all"
+                            title="Delete Service"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* Quick Add Placeholder with Route Suggestions */}
+                <div className="space-y-6">
+                  <button 
+                     onClick={() => { setEditingItem(null); setShowModal(true); }}
+                     className="w-full rounded-[2.5rem] border-2 border-dashed border-slate-200 bg-slate-50/50 flex flex-col items-center justify-center p-12 text-slate-400 hover:border-accent/40 hover:bg-accent/5 transition-all group min-h-[400px]"
+                  >
+                    <div className="w-16 h-16 bg-white rounded-3xl flex items-center justify-center shadow-sm mb-4 group-hover:scale-110 transition-transform">
+                      <Plus size={32} />
+                    </div>
+                    <p className="font-black text-xs uppercase tracking-[0.2em] mb-1">New Service</p>
+                    <p className="text-[10px] font-medium opacity-60">Create a recurring trip template</p>
+                  </button>
+
+                  {routes.length > 0 && (
+                    <div className="bg-white rounded-[2rem] border border-slate-100 p-6 shadow-sm">
+                      <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 ml-2">Quick Start with Route</h4>
+                      <div className="space-y-2">
+                        {routes.slice(0, 5).map(route => (
+                          <button
+                            key={route.id}
+                            onClick={() => {
+                              setEditingItem({ 
+                                routeId: route.id, 
+                                boardingPoints: route.orderedCounterList, 
+                                droppingPoints: route.orderedCounterList,
+                                coachNumber: '',
+                                baseDepartureTime: '06:00',
+                                arrivalTime: '12:00',
+                                fare: 500
+                              });
+                              setShowModal(true);
+                            }}
+                            className="w-full p-3 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-between hover:bg-accent/5 hover:border-accent/30 transition-all group/btn"
+                          >
+                            <div className="flex items-center gap-3">
+                              <Navigation size={14} className="text-slate-400 group-hover/btn:text-accent" />
+                              <span className="text-xs font-bold text-slate-700">{route.name}</span>
+                            </div>
+                            <Plus size={14} className="text-slate-300 group-hover/btn:text-accent" />
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
           {activeTab === 'tripCounterTimes' && (
             <div className="card overflow-hidden">
               <table className="w-full text-left">
@@ -1938,8 +3001,8 @@ export const AdminPanel = () => {
                       <tr key={tct.id} className="hover:bg-slate-50/50 transition-colors">
                         <td className="px-6 py-4 font-bold text-slate-800">{trip?.coachNumber || tct.tripId}</td>
                         <td className="px-6 py-4 text-sm font-medium text-slate-500">{counter?.name || tct.counterId}</td>
-                        <td className="px-6 py-4 text-sm text-slate-500">{tct.arrivalTime}</td>
-                        <td className="px-6 py-4 text-sm text-slate-500">{tct.departureTime}</td>
+                        <td className="px-6 py-4 text-sm text-slate-500">{formatTimeString(tct.arrivalTime)}</td>
+                        <td className="px-6 py-4 text-sm text-slate-500">{formatTimeString(tct.departureTime)}</td>
                         <td className="px-6 py-4">
                           <span className={cn(
                             "px-2 py-1 rounded-full text-[10px] font-black uppercase",
@@ -1997,23 +3060,49 @@ export const AdminPanel = () => {
   </main>
 </div>
 
-      {/* Modal for adding/editing */}
-      {showModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-accent/40 backdrop-blur-md">
-          <div className="bg-white w-full max-w-lg rounded-[32px] shadow-2xl relative animate-in fade-in zoom-in duration-300 overflow-hidden">
-            <div className="p-8 border-b border-slate-100 flex items-center justify-between">
-              <h3 className="text-xl font-black uppercase tracking-tight text-slate-800">
-                {editingItem ? 'Edit Item' : 'Add New'}
-              </h3>
-              <button 
-                onClick={() => setShowModal(false)}
-                className="p-2 bg-slate-50 text-slate-400 hover:text-accent hover:bg-accent/10 rounded-xl transition-all"
-              >
-                <X size={20} />
-              </button>
-            </div>
-            
-            <form onSubmit={handleAddData} className="p-8 space-y-6 max-h-[70vh] overflow-y-auto">
+      {/* Modal for adding/editing - Slide-up Sheet */}
+      <AnimatePresence>
+        {showModal && (
+          <div 
+            className="fixed inset-0 z-[100] flex items-end justify-center bg-slate-900/40 backdrop-blur-md"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setShowModal(false);
+            }}
+          >
+            <motion.div 
+              initial={{ y: "100%" }}
+              animate={{ y: 0 }}
+              exit={{ y: "100%" }}
+              transition={{ type: "spring", damping: 30, stiffness: 300 }}
+              className="bg-white w-full max-w-6xl h-[94vh] rounded-t-[48px] shadow-2xl relative flex flex-col overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <form onSubmit={handleAddData} className="flex flex-col h-full">
+                {/* Sheet Handle for visual cue */}
+                <div className="w-12 h-1.5 bg-slate-200 rounded-full mx-auto mt-4 shrink-0 transition-all hover:bg-slate-300 cursor-pointer" onClick={() => setShowModal(false)} />
+                
+                <div className="px-10 py-6 border-b border-slate-100 flex items-center justify-between shrink-0">
+                  <div className="flex items-center gap-4">
+                    <div className="w-1.5 h-8 bg-accent rounded-full" />
+                    <div>
+                      <h3 className="text-2xl font-black uppercase tracking-tight text-slate-800 leading-none">
+                        {editingItem ? 'Edit Profile' : 'Add New Record'}
+                      </h3>
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">
+                        {activeTab} Management Console
+                      </p>
+                    </div>
+                  </div>
+                  <button 
+                    type="button"
+                    onClick={() => setShowModal(false)}
+                    className="p-3 bg-slate-50 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-2xl transition-all group lg:mr-2"
+                  >
+                    <X size={24} className="group-hover:rotate-90 transition-transform duration-300" />
+                  </button>
+                </div>
+                
+                <div className="flex-1 p-10 space-y-8 overflow-y-auto custom-scrollbar">
               {activeTab === 'counters' && (
                 <>
                   <div className="space-y-1.5">
@@ -2089,122 +3178,202 @@ export const AdminPanel = () => {
                 <div className="grid grid-cols-2 gap-4">
                   {!editingItem && (
                     <div className="col-span-2 space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Load From Template</label>
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Load From Service Line</label>
                       <select 
-                        className="input-field"
+                        className="input-field shadow-sm bg-accent/5 focus:bg-white"
                         onChange={(e) => {
                           const template = tripTemplates.find(t => t.id === e.target.value);
                           if (template) {
                             const form = e.target.closest('form');
                             if (form) {
-                              (form.elements.namedItem('routeId') as HTMLSelectElement).value = template.routeId;
+                              setModalRouteId(template.routeId);
+                              (form.elements.namedItem('routeId') as HTMLInputElement).value = template.routeId;
                               (form.elements.namedItem('busId') as HTMLSelectElement).value = template.busId;
                               (form.elements.namedItem('coachNumber') as HTMLInputElement).value = template.coachNumber;
-                              (form.elements.namedItem('baseDepartureTime') as HTMLInputElement).value = template.baseDepartureTime;
                               (form.elements.namedItem('fare') as HTMLInputElement).value = template.fare.toString();
-                              (form.elements.namedItem('repeatDaily') as HTMLInputElement).checked = template.repeatDaily;
                               
                               const boardingChecks = form.querySelectorAll('input[name="boardingPoints"]');
-                              boardingChecks.forEach((cb: any) => cb.checked = template.boardingPoints.includes(cb.value));
+                              boardingChecks.forEach((cb: any) => cb.checked = template.boardingPoints?.includes(cb.value));
                               
                               const droppingChecks = form.querySelectorAll('input[name="droppingPoints"]');
-                              droppingChecks.forEach((cb: any) => cb.checked = template.droppingPoints.includes(cb.value));
+                              droppingChecks.forEach((cb: any) => cb.checked = template.droppingPoints?.includes(cb.value));
                             }
                           }
                         }}
                       >
-                        <option value="">Select Template</option>
+                        <option value="">Choose Service Template...</option>
                         {tripTemplates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                       </select>
                     </div>
                   )}
-                  <div className="col-span-2 space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Route</label>
-                    <select name="routeId" defaultValue={editingItem?.routeId} className="input-field" required>
-                      <option value="">Select Route</option>
-                      {routes.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-                    </select>
-                  </div>
+                  <input type="hidden" name="routeId" value={modalRouteId || editingItem?.routeId || ''} />
+                  
+                  {(() => {
+                    const selectedRoute = routes.find(r => r.id === (modalRouteId || editingItem?.routeId));
+                    const firstStop = selectedRoute?.stops?.[0];
+                    const lastStop = selectedRoute?.stops?.[selectedRoute.stops.length - 1];
+                    const inferredDep = (typeof firstStop !== 'string' && firstStop?.boardingTime) || editingItem?.baseDepartureTime || '06:00';
+                    const inferredArr = (typeof lastStop !== 'string' && lastStop?.arrivalTime) || editingItem?.arrivalTime || '12:00';
+                    
+                    return (
+                      <>
+                        <input type="hidden" name="baseDepartureTime" value={inferredDep} />
+                        <input type="hidden" name="arrivalTime" value={inferredArr} />
+                      </>
+                    );
+                  })()}
+
+                  <input type="hidden" name="repeatDaily" value={editingItem?.repeatDaily ? 'on' : 'off'} />
+
+                  {(modalRouteId || editingItem?.routeId) && (
+                    <div className="col-span-2 px-4 py-3 bg-emerald-50 text-emerald-700 text-[10px] font-black uppercase rounded-2xl border border-emerald-100 flex items-center justify-between shadow-sm animate-in slide-in-from-top-2 duration-300">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-emerald-500/10 flex items-center justify-center">
+                          <Navigation size={14} className="animate-pulse" />
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-emerald-500/70 tracking-widest leading-none mb-1">Route Selected</span>
+                          <span className="text-sm font-black tracking-tight leading-none">
+                            {routes.find(r => r.id === (modalRouteId || editingItem?.routeId))?.name}
+                          </span>
+                        </div>
+                      </div>
+                      <ShieldCheck size={20} className="text-emerald-500/30" />
+                    </div>
+                  )}
+
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Bus</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Assigned Bus</label>
                     <select name="busId" defaultValue={editingItem?.busId} className="input-field" required>
                       <option value="">Select Bus</option>
                       {buses.map(b => <option key={b.id} value={b.id}>{b.regNo} ({b.isAC ? 'AC' : 'Non-AC'})</option>)}
                     </select>
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Coach No</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Coach ID</label>
                     <input name="coachNumber" defaultValue={editingItem?.coachNumber} className="input-field" required placeholder="501" />
                   </div>
                   <input name="date" type="hidden" value={editingItem?.date || selectedDate} />
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Departure Time</label>
-                    <input name="baseDepartureTime" type="time" defaultValue={editingItem?.baseDepartureTime || '06:00'} className="input-field" required />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Arrival Time</label>
-                    <input name="arrivalTime" type="time" defaultValue={editingItem?.arrivalTime || '12:00'} className="input-field" required />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Fare</label>
+                  
+                  <div className="col-span-2 space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Trip Fare (৳)</label>
                     <input name="fare" type="number" defaultValue={editingItem?.fare} className="input-field" required />
                   </div>
-                  <div className="flex items-center gap-3 px-6 py-4 bg-slate-50 rounded-2xl">
-                    <input name="repeatDaily" type="checkbox" defaultChecked={editingItem?.repeatDaily} className="w-5 h-5 rounded border-slate-300 text-accent focus:ring-accent" />
-                    <label className="text-sm font-bold text-slate-600">Repeat Daily</label>
-                  </div>
-                  {!editingItem && (
-                    <div className="flex items-center gap-3 px-6 py-4 bg-blue-50 rounded-2xl">
-                      <input name="saveAsTemplate" type="checkbox" className="w-5 h-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
-                      <label className="text-sm font-bold text-blue-700">Save as Template</label>
+
+                  <div className="col-span-2 space-y-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="h-[1px] flex-1 bg-slate-100" />
+                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em]">Stoppage Configuration</span>
+                      <div className="h-[1px] flex-1 bg-slate-100" />
                     </div>
-                  )}
-                  <div className="col-span-2 space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Boarding Points</label>
-                    <div className="grid grid-cols-2 gap-2 p-4 bg-slate-50 rounded-2xl max-h-40 overflow-y-auto">
-                      {counters.map(c => (
-                        <label key={c.id} className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer hover:text-primary">
-                          <input 
-                            type="checkbox" 
-                            name="boardingPoints" 
-                            value={c.id} 
-                            defaultChecked={editingItem?.boardingPoints?.includes(c.id)}
-                            className="w-4 h-4 rounded border-slate-300 text-primary focus:ring-primary"
-                          />
-                          {c.name}
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="col-span-2 space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Dropping Points</label>
-                    <div className="grid grid-cols-2 gap-2 p-4 bg-slate-50 rounded-2xl max-h-40 overflow-y-auto">
-                      {counters.map(c => (
-                        <label key={c.id} className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer hover:text-primary">
-                          <input 
-                            type="checkbox" 
-                            name="droppingPoints" 
-                            value={c.id} 
-                            defaultChecked={editingItem?.droppingPoints?.includes(c.id)}
-                            className="w-4 h-4 rounded border-slate-300 text-primary focus:ring-primary"
-                          />
-                          {c.name}
-                        </label>
-                      ))}
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Boarding Points Redesign */}
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between px-2">
+                          <div className="flex items-center gap-2">
+                            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                            <label className="text-[10px] font-black text-slate-800 uppercase tracking-widest">Boarding Points</label>
+                          </div>
+                          <button 
+                            type="button"
+                            onClick={(e) => {
+                              const checks = e.currentTarget.closest('.space-y-3')?.querySelectorAll('input[type="checkbox"]');
+                              checks?.forEach((c: any) => c.checked = true);
+                            }}
+                            className="text-[8px] font-black text-primary hover:underline uppercase"
+                          >
+                            Select All
+                          </button>
+                        </div>
+                        <div className="bg-slate-50/50 rounded-2xl border border-slate-100 p-3 space-y-2 max-h-56 overflow-y-auto">
+                          {modalRouteId || editingItem?.routeId ? (
+                            routes.find(r => r.id === (modalRouteId || editingItem?.routeId))?.stops.map((stop: any, idx: number) => {
+                              const cId = typeof stop === 'string' ? stop : stop.counterId;
+                              const c = counters.find(counter => counter.id === cId);
+                              return (
+                                <label key={idx} className="flex items-center justify-between p-2 bg-white rounded-xl border border-slate-50 hover:border-emerald-200 transition-all cursor-pointer group">
+                                  <div className="flex items-center gap-3">
+                                    <input 
+                                      type="checkbox" 
+                                      name="boardingPoints" 
+                                      value={cId} 
+                                      defaultChecked={editingItem?.boardingPoints ? editingItem.boardingPoints.includes(cId) : true}
+                                      className="w-4 h-4 rounded border-slate-300 text-emerald-500 focus:ring-emerald-500"
+                                    />
+                                    <span className="text-xs font-bold text-slate-600 group-hover:text-slate-900">{c?.name}</span>
+                                  </div>
+                                  <span className="text-[8px] font-black text-slate-300 uppercase">{idx === 0 ? 'START' : 'STOP'}</span>
+                                </label>
+                              );
+                            })
+                          ) : (
+                            <p className="text-[10px] text-slate-400 italic text-center py-4">Select a route to view stops</p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Dropping Points Redesign */}
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between px-2">
+                          <div className="flex items-center gap-2">
+                            <div className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-pulse" />
+                            <label className="text-[10px] font-black text-slate-800 uppercase tracking-widest">Dropping Points</label>
+                          </div>
+                          <button 
+                            type="button"
+                            onClick={(e) => {
+                              const checks = e.currentTarget.closest('.space-y-3')?.querySelectorAll('input[type="checkbox"]');
+                              checks?.forEach((c: any) => c.checked = true);
+                            }}
+                            className="text-[8px] font-black text-primary hover:underline uppercase"
+                          >
+                            Select All
+                          </button>
+                        </div>
+                        <div className="bg-slate-50/50 rounded-2xl border border-slate-100 p-3 space-y-2 max-h-56 overflow-y-auto">
+                          {modalRouteId || editingItem?.routeId ? (
+                            routes.find(r => r.id === (modalRouteId || editingItem?.routeId))?.stops.map((stop: any, idx: number) => {
+                              const cId = typeof stop === 'string' ? stop : stop.counterId;
+                              const c = counters.find(counter => counter.id === cId);
+                              const isLast = idx === routes.find(r => r.id === (modalRouteId || editingItem?.routeId))!.stops.length - 1;
+                              return (
+                                <label key={idx} className="flex items-center justify-between p-2 bg-white rounded-xl border border-slate-50 hover:border-orange-200 transition-all cursor-pointer group">
+                                  <div className="flex items-center gap-3">
+                                    <input 
+                                      type="checkbox" 
+                                      name="droppingPoints" 
+                                      value={cId} 
+                                      defaultChecked={editingItem?.droppingPoints ? editingItem.droppingPoints.includes(cId) : true}
+                                      className="w-4 h-4 rounded border-slate-300 text-orange-500 focus:ring-orange-500"
+                                    />
+                                    <span className="text-xs font-bold text-slate-600 group-hover:text-slate-900">{c?.name}</span>
+                                  </div>
+                                  <span className="text-[8px] font-black text-slate-300 uppercase">{isLast ? 'END' : 'STOP'}</span>
+                                </label>
+                              );
+                            })
+                          ) : (
+                            <p className="text-[10px] text-slate-400 italic text-center py-4">Select a route to view stops</p>
+                          )}
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
               )}
 
-              {activeTab === 'tripTemplates' && (
+              {activeTab === 'tripCenter' && (
                 <div className="grid grid-cols-2 gap-4">
                   <div className="col-span-2 space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Template Name</label>
-                    <input name="name" defaultValue={editingItem?.name} className="input-field" required placeholder="Daily Dhaka Express" />
-                  </div>
-                  <div className="col-span-2 space-y-1.5">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Route</label>
-                    <select name="routeId" defaultValue={editingItem?.routeId} className="input-field" required>
+                    <select 
+                      name="routeId" 
+                      defaultValue={editingItem?.routeId} 
+                      className="input-field" 
+                      required
+                      onChange={(e) => setModalRouteId(e.target.value)}
+                    >
                       <option value="">Select Route</option>
                       {routes.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
                     </select>
@@ -2220,86 +3389,156 @@ export const AdminPanel = () => {
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Coach No</label>
                     <input name="coachNumber" defaultValue={editingItem?.coachNumber} className="input-field" required placeholder="501" />
                   </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Base Departure Time</label>
-                    <input name="baseDepartureTime" type="time" defaultValue={editingItem?.baseDepartureTime || '06:00'} className="input-field" required />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Fare</label>
-                    <input name="fare" type="number" defaultValue={editingItem?.fare} className="input-field" required />
-                  </div>
-                  <div className="flex items-center gap-3 px-6 py-4 bg-slate-50 rounded-2xl">
-                    <input name="repeatDaily" type="checkbox" defaultChecked={editingItem?.repeatDaily} className="w-5 h-5 rounded border-slate-300 text-accent focus:ring-accent" />
-                    <label className="text-sm font-bold text-slate-600">Repeat Daily</label>
-                  </div>
+                  
+                  {(() => {
+                    const selectedRoute = routes.find(r => r.id === (modalRouteId || editingItem?.routeId));
+                    const firstStop = selectedRoute?.stops?.[0];
+                    const lastStop = selectedRoute?.stops?.[selectedRoute.stops.length - 1];
+                    const inferredDep = (typeof firstStop !== 'string' && firstStop?.boardingTime) || editingItem?.baseDepartureTime || '06:00';
+                    const inferredArr = (typeof lastStop !== 'string' && lastStop?.arrivalTime) || editingItem?.arrivalTime || '12:00';
+                    
+                    return (
+                      <>
+                        <input type="hidden" name="baseDepartureTime" value={inferredDep} />
+                        <input type="hidden" name="arrivalTime" value={inferredArr} />
+                      </>
+                    );
+                  })()}
+
                   <div className="col-span-2 space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Boarding Points</label>
-                    <div className="grid grid-cols-2 gap-2 p-4 bg-slate-50 rounded-2xl max-h-40 overflow-y-auto">
-                      {counters.map(c => (
-                        <label key={c.id} className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer hover:text-primary">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Fare (৳)</label>
+                    <input name="fare" type="number" defaultValue={editingItem?.fare || 500} className="input-field" required />
+                  </div>
+                  
+                  <div className="col-span-2 space-y-3">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Active Days</label>
+                    <div className="flex justify-between gap-1 p-2 bg-slate-50 rounded-2xl">
+                      {['S','M','T','W','T','F','S'].map((day, i) => (
+                        <label key={i} className="flex-1">
                           <input 
                             type="checkbox" 
-                            name="boardingPoints" 
-                            value={c.id} 
-                            defaultChecked={editingItem?.boardingPoints?.includes(c.id)}
-                            className="w-4 h-4 rounded border-slate-300 text-primary focus:ring-primary"
+                            name="activeDays" 
+                            value={i} 
+                            className="hidden peer" 
+                            defaultChecked={editingItem?.activeDays ? editingItem.activeDays.includes(i) : true}
                           />
-                          {c.name}
+                          <div className="h-10 rounded-xl flex items-center justify-center text-xs font-black cursor-pointer bg-white text-slate-300 peer-checked:bg-primary peer-checked:text-white transition-all shadow-sm">
+                            {day}
+                          </div>
                         </label>
                       ))}
                     </div>
                   </div>
-                  <div className="col-span-2 space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Dropping Points</label>
-                    <div className="grid grid-cols-2 gap-2 p-4 bg-slate-50 rounded-2xl max-h-40 overflow-y-auto">
-                      {counters.map(c => (
-                        <label key={c.id} className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer hover:text-primary">
-                          <input 
-                            type="checkbox" 
-                            name="droppingPoints" 
-                            value={c.id} 
-                            defaultChecked={editingItem?.droppingPoints?.includes(c.id)}
-                            className="w-4 h-4 rounded border-slate-300 text-primary focus:ring-primary"
-                          />
-                          {c.name}
-                        </label>
-                      ))}
+                  
+                  <input type="hidden" name="repeatDaily" value="on" />
+
+                  <div className="col-span-2 space-y-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="h-[1px] flex-1 bg-slate-100" />
+                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em]">Stoppage Configuration</span>
+                      <div className="h-[1px] flex-1 bg-slate-100" />
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Boarding Points */}
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between px-2">
+                          <label className="text-[10px] font-black text-slate-800 uppercase tracking-widest">Boarding Points</label>
+                          <button 
+                            type="button"
+                            onClick={(e) => {
+                              const checks = e.currentTarget.closest('.space-y-3')?.querySelectorAll('input[type="checkbox"]');
+                              checks?.forEach((c: any) => c.checked = true);
+                            }}
+                            className="text-[8px] font-black text-primary hover:underline uppercase"
+                          >
+                            Select All
+                          </button>
+                        </div>
+                        <div className="bg-slate-50/50 rounded-2xl border border-slate-100 p-3 space-y-2 max-h-40 overflow-y-auto">
+                          {modalRouteId || editingItem?.routeId ? (
+                            routes.find(r => r.id === (modalRouteId || editingItem?.routeId))?.stops.map((stop: any, idx: number) => {
+                              const cId = typeof stop === 'string' ? stop : stop.counterId;
+                              const c = counters.find(counter => counter.id === cId);
+                              return (
+                                <label key={idx} className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer p-2 bg-white rounded-xl border border-slate-50 hover:border-primary transition-all">
+                                  <input 
+                                    type="checkbox" 
+                                    name="boardingPoints" 
+                                    value={cId} 
+                                    defaultChecked={editingItem?.boardingPoints ? editingItem.boardingPoints.includes(cId) : true}
+                                    className="w-4 h-4 rounded border-slate-300 text-primary focus:ring-primary"
+                                  />
+                                  <span>{c?.name}</span>
+                                </label>
+                              );
+                            })
+                          ) : (
+                            <p className="text-[10px] text-slate-400 italic text-center py-4">Select a route first</p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Dropping Points */}
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between px-2">
+                          <label className="text-[10px] font-black text-slate-800 uppercase tracking-widest">Dropping Points</label>
+                          <button 
+                            type="button"
+                            onClick={(e) => {
+                              const checks = e.currentTarget.closest('.space-y-3')?.querySelectorAll('input[type="checkbox"]');
+                              checks?.forEach((c: any) => c.checked = true);
+                            }}
+                            className="text-[8px] font-black text-primary hover:underline uppercase"
+                          >
+                            Select All
+                          </button>
+                        </div>
+                        <div className="bg-slate-50/50 rounded-2xl border border-slate-100 p-3 space-y-2 max-h-40 overflow-y-auto">
+                          {modalRouteId || editingItem?.routeId ? (
+                            routes.find(r => r.id === (modalRouteId || editingItem?.routeId))?.stops.map((stop: any, idx: number) => {
+                              const cId = typeof stop === 'string' ? stop : stop.counterId;
+                              const c = counters.find(counter => counter.id === cId);
+                              return (
+                                <label key={idx} className="flex items-center gap-2 text-xs font-bold text-slate-600 cursor-pointer p-2 bg-white rounded-xl border border-slate-50 hover:border-primary transition-all">
+                                  <input 
+                                    type="checkbox" 
+                                    name="droppingPoints" 
+                                    value={cId} 
+                                    defaultChecked={editingItem?.droppingPoints ? editingItem.droppingPoints.includes(cId) : true}
+                                    className="w-4 h-4 rounded border-slate-300 text-primary focus:ring-primary"
+                                  />
+                                  <span>{c?.name}</span>
+                                </label>
+                              );
+                            })
+                          ) : (
+                            <p className="text-[10px] text-slate-400 italic text-center py-4">Select a route first</p>
+                          )}
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
               )}
 
-              {activeTab === 'counterTimeTemplates' && (
-                <>
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Trip Template</label>
-                    <select name="templateId" defaultValue={editingItem?.templateId} className="input-field" required>
-                      <option value="">Select Trip Template</option>
-                      {tripTemplates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                    </select>
+              {activeTab === 'routeManager' && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="col-span-2 space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Route Name</label>
+                    <input name="name" defaultValue={editingItem?.name} className="input-field" required placeholder="Dhaka - Kushtia" />
                   </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Counter</label>
-                    <select name="counterId" defaultValue={editingItem?.counterId} className="input-field" required>
-                      <option value="">Select Counter</option>
-                      {counters.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                    </select>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Arrival Offset (min)</label>
-                      <input name="arrivalTimeOffset" type="number" defaultValue={editingItem?.arrivalTimeOffset || 0} className="input-field" required />
-                    </div>
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Departure Offset (min)</label>
-                      <input name="departureTimeOffset" type="number" defaultValue={editingItem?.departureTimeOffset || 0} className="input-field" required />
+                  <div className="col-span-2 space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Route Mapper</label>
+                    <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                      <RouteMapper 
+                        stops={routeStops} 
+                        onChange={setRouteStops} 
+                        counters={counters} 
+                      />
                     </div>
                   </div>
-                  <div className="flex items-center gap-3 px-6 py-4 bg-slate-50 rounded-2xl">
-                    <input name="isReportingCounter" type="checkbox" defaultChecked={editingItem?.isReportingCounter} className="w-5 h-5 rounded border-slate-300 text-accent focus:ring-accent" />
-                    <label className="text-sm font-bold text-slate-600">Reporting Counter</label>
-                  </div>
-                </>
+                </div>
               )}
 
               {activeTab === 'fleet' && (
@@ -2434,7 +3673,7 @@ export const AdminPanel = () => {
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Trip</label>
                     <select name="tripId" defaultValue={editingItem?.tripId} className="input-field" required>
                       <option value="">Select Trip</option>
-                      {trips.map(t => <option key={t.id} value={t.id}>{t.coachNumber} - {routes.find(r => r.id === t.routeId)?.name}</option>)}
+                      {uniqueTripsForSelection.map(t => <option key={t.id} value={t.id}>{t.coachNumber} - {routes.find(r => r.id === t.routeId)?.name} ({t.baseDepartureTime})</option>)}
                     </select>
                   </div>
                   <div className="space-y-1.5">
@@ -2460,14 +3699,26 @@ export const AdminPanel = () => {
                   </div>
                 </>
               )}
+                </div>
 
-              <button type="submit" className="w-full btn-primary py-4 shadow-lg shadow-primary/20">
-                {editingItem ? 'Update' : 'Save'}
-              </button>
-            </form>
+                <div className="p-8 bg-white border-t border-slate-100 flex items-center justify-end gap-4 shrink-0 shadow-[0_-10px_30px_-15px_rgba(0,0,0,0.05)]">
+                  <button 
+                    type="button" 
+                    onClick={() => setShowModal(false)}
+                    className="px-8 py-4 font-black text-slate-400 uppercase tracking-widest hover:text-slate-600 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button type="submit" className="px-12 py-4 btn-primary text-sm font-black uppercase tracking-widest shadow-xl shadow-primary/30 flex items-center gap-3 active:scale-[0.98] transition-transform rounded-2xl">
+                    <ShieldCheck size={20} />
+                    <span>{editingItem ? 'Update Database Record' : 'Save New Entry'}</span>
+                  </button>
+                </div>
+              </form>
+            </motion.div>
           </div>
-        </div>
-      )}
+        )}
+      </AnimatePresence>
 
       {/* Delete Confirmation Modal */}
       {deleteConfirm && (
@@ -2501,65 +3752,135 @@ export const AdminPanel = () => {
           </div>
         </div>
       )}
-      {/* Trip Bookings Modal */}
-      {selectedTripForBookings && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-primary/40 backdrop-blur-sm">
-          <div className="bg-white rounded-[2rem] p-8 w-full max-w-4xl max-h-[90vh] overflow-y-auto shadow-2xl relative">
-            <button 
-              onClick={() => setSelectedTripForBookings(null)}
-              className="absolute top-6 right-6 p-2 hover:bg-slate-100 rounded-full transition-colors"
+      {/* Trip Bookings Modal - Slide-up Sheet */}
+      <AnimatePresence>
+        {selectedTripForBookings && (
+          <div 
+            className="fixed inset-0 z-[100] flex items-end justify-center bg-primary/20 backdrop-blur-md"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setSelectedTripForBookings(null);
+            }}
+          >
+            <motion.div 
+              initial={{ y: "100%" }}
+              animate={{ y: 0 }}
+              exit={{ y: "100%" }}
+              transition={{ type: "spring", damping: 30, stiffness: 250 }}
+              className="bg-white rounded-t-[48px] w-full max-w-7xl h-[94vh] shadow-2xl relative flex flex-col overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
             >
-              <X size={20} />
-            </button>
-            
-            <div className="space-y-8">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-2xl font-black text-primary">Booking Information</h3>
-                  <p className="text-slate-500 font-medium">Coach: {selectedTripForBookings.coachNumber}</p>
+              <div className="w-12 h-1.5 bg-slate-200 rounded-full mx-auto mt-4 shrink-0 hover:bg-slate-300 cursor-pointer" onClick={() => setSelectedTripForBookings(null)} />
+              
+              <div className="px-10 py-8 shrink-0 flex items-center justify-between">
+                <div className="flex items-center gap-5">
+                  <div className="w-12 h-12 bg-primary/10 rounded-2xl flex items-center justify-center text-primary">
+                    <HistoryIcon size={28} />
+                  </div>
+                  <div>
+                    <h3 className="text-3xl font-black text-slate-800 tracking-tight leading-none">Booking Inventory</h3>
+                    <p className="text-slate-500 font-bold uppercase text-[10px] tracking-[0.2em] mt-2">
+                       Coach {selectedTripForBookings.coachNumber} • {format(new Date(selectedTripForBookings.departureTime), 'PPPP')}
+                    </p>
+                  </div>
                 </div>
+                <button 
+                  onClick={() => setSelectedTripForBookings(null)}
+                  className="p-3 hover:bg-red-50 hover:text-red-500 text-slate-400 rounded-2xl transition-all"
+                >
+                  <X size={28} />
+                </button>
               </div>
-
-              <div className="grid md:grid-cols-2 gap-8">
-                <SeatMap
-                  capacity={buses.find(b => b.id === selectedTripForBookings.busId)?.capacity || 40}
-                  bookedSeats={bookings.filter(b => b.tripId === selectedTripForBookings.id).flatMap(b => b.seats)}
-                  femaleBookedSeats={bookings.filter(b => b.tripId === selectedTripForBookings.id && b.gender === 'female').flatMap(b => b.seats)}
-                  selectedSeats={[]}
-                  lockedSeats={[]}
-                  onSeatClick={() => {}}
-                  bookings={bookings.filter(b => b.tripId === selectedTripForBookings.id)}
-                  passengers={passengers}
-                  onReprint={printTicket}
-                />
-                
-                <div className="space-y-4">
-                  <h4 className="font-bold text-slate-700">Booking List</h4>
-                  <div className="space-y-2">
-                    {bookings.filter(b => b.tripId === selectedTripForBookings.id).map(booking => {
-                      const passenger = passengers.find(p => p.id === booking.passengerId);
-                      return (
-                        <div key={booking.id} className="p-4 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between">
-                          <div>
-                            <div className="font-bold text-slate-800">{passenger?.name}</div>
-                            <div className="text-xs text-slate-500">{booking.seats.join(', ')}</div>
-                          </div>
-                          <button 
-                            onClick={() => printTicket(booking)}
-                            className="p-2 text-primary hover:bg-white rounded-lg transition-all"
+              
+              <div className="flex-1 px-10 pb-10 overflow-y-auto custom-scrollbar">
+                <div className="grid lg:grid-cols-12 gap-10">
+                  <div className="lg:col-span-7 bg-slate-50/50 p-8 rounded-[40px] border border-slate-100">
+                    <SeatMap
+                      capacity={buses.find(b => b.id === selectedTripForBookings.busId)?.capacity || 40}
+                      bookedSeats={bookings.filter(b => b.tripId === selectedTripForBookings.id).flatMap(b => b.seats)}
+                      femaleBookedSeats={bookings.filter(b => b.tripId === selectedTripForBookings.id && b.gender === 'female').flatMap(b => b.seats)}
+                      selectedSeats={[]}
+                      lockedSeats={[]}
+                      onSeatClick={() => {}}
+                      bookings={bookings.filter(b => b.tripId === selectedTripForBookings.id)}
+                      passengers={passengers}
+                      onReprint={printTicket}
+                    />
+                  </div>
+                  
+                  <div className="lg:col-span-5 space-y-6">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xl font-black text-slate-700">Confirmed Passengers</h4>
+                      <span className="px-3 py-1 bg-primary/10 text-primary text-[10px] font-black rounded-full uppercase">
+                        {bookings.filter(b => b.tripId === selectedTripForBookings.id).length} Orders
+                      </span>
+                    </div>
+                    
+                    <div className="space-y-3">
+                      {bookings.filter(b => b.tripId === selectedTripForBookings.id).map(booking => {
+                        const passenger = passengers.find(p => p.id === booking.passengerId);
+                        return (
+                          <motion.div 
+                            initial={{ opacity: 0, scale: 0.95 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            key={booking.id} 
+                            className="p-5 bg-white rounded-3xl border-2 border-slate-50 hover:border-primary/20 transition-all flex items-center justify-between shadow-sm group"
                           >
-                            <Printer size={16} />
-                          </button>
+                            <div className="flex items-center gap-4">
+                              <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 font-black text-xs uppercase">
+                                {passenger?.name?.substring(0, 2)}
+                              </div>
+                              <div>
+                                <div className="font-black text-slate-800 uppercase text-xs">{passenger?.name}</div>
+                                <div className="flex items-center gap-2 mt-1">
+                                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">Seats:</span>
+                                  <span className="text-[10px] font-black text-emerald-600 bg-emerald-50 px-2 rounded-md tracking-widest leading-none py-1">{booking.seats.join(', ')}</span>
+                                </div>
+                              </div>
+                            </div>
+                            <button 
+                              onClick={() => printTicket(booking)}
+                              className="w-10 h-10 flex items-center justify-center text-slate-300 hover:text-primary hover:bg-primary/5 rounded-xl transition-all"
+                            >
+                              <Printer size={18} />
+                            </button>
+                          </motion.div>
+                        );
+                      })}
+                      {bookings.filter(b => b.tripId === selectedTripForBookings.id).length === 0 && (
+                        <div className="py-20 flex flex-col items-center justify-center text-slate-400 gap-3">
+                          <Zap size={40} className="text-slate-200" />
+                          <p className="text-sm font-bold">No bookings found for this trip</p>
                         </div>
-                      );
-                    })}
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
+            </motion.div>
           </div>
-        </div>
-      )}
+        )}
+      </AnimatePresence>
+
+      {/* Notifications Overlay */}
+      <div className="fixed bottom-8 right-8 z-[100] space-y-4 pointer-events-none">
+        <AnimatePresence>
+          {uiNotifications.map((notif) => (
+            <motion.div
+              key={notif.id}
+              initial={{ opacity: 0, x: 50, scale: 0.9 }}
+              animate={{ opacity: 1, x: 0, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.5, transition: { duration: 0.2 } }}
+              className={cn(
+                "px-6 py-4 rounded-2xl shadow-2xl border flex items-center gap-3 min-w-[300px] pointer-events-auto",
+                notif.type === 'success' ? "bg-emerald-500 text-white border-emerald-400" : "bg-red-500 text-white border-red-400"
+              )}
+            >
+              {notif.type === 'success' ? <ShieldCheck size={20} /> : <AlertCircle size={20} />}
+              <span className="font-bold text-sm tracking-tight">{notif.message}</span>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </div>
     </div>
   );
 };

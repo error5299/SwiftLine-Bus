@@ -45,8 +45,8 @@ const SortableStop = ({ stop, index, counters, updateStop, removeStop, t }: any)
         <GripVertical size={16} />
       </div>
       
-      <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-100 group hover:border-primary/20 transition-all">
-        <div className="space-y-1">
+      <div className="flex-1 grid grid-cols-1 md:grid-cols-5 gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-100 group hover:border-primary/20 transition-all">
+        <div className="md:col-span-1 space-y-1">
           <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
             <MapPin size={10} />
             {t('কাউন্টার', 'Counter')}
@@ -66,32 +66,51 @@ const SortableStop = ({ stop, index, counters, updateStop, removeStop, t }: any)
 
         <div className="space-y-1">
           <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
-            <Ruler size={10} />
-            {t('দূরত্ব (কি.মি.)', 'Distance (km)')}
+            {t('আগত', 'Arr.')}
           </label>
           <input
-            type="number"
-            value={stop.distance}
-            onChange={(e) => updateStop(index, 'distance', Number(e.target.value))}
+            type="time"
+            value={stop.arrivalTime}
+            onChange={(e) => updateStop(index, 'arrivalTime', e.target.value)}
             className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-primary"
-            placeholder="0"
-            min="0"
           />
         </div>
 
         <div className="space-y-1">
           <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
-            <Clock size={10} />
-            {t('সময় (মিনিট)', 'Time (min)')}
+            {t('প্রস্থান', 'Dep.')}
+          </label>
+          <input
+            type="time"
+            value={stop.departureTime}
+            onChange={(e) => updateStop(index, 'departureTime', e.target.value)}
+            className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-primary"
+          />
+        </div>
+
+        <div className="space-y-1">
+          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
+            {t('বোর্ডিং', 'Boarding')}
+          </label>
+          <input
+            type="time"
+            value={stop.boardingTime}
+            onChange={(e) => updateStop(index, 'boardingTime', e.target.value)}
+            className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-primary"
+          />
+        </div>
+
+        <div className="space-y-1">
+          <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1">
+            {t('অর্ডার', 'Order')}
           </label>
           <div className="flex items-center gap-2">
             <input
               type="number"
-              value={stop.travelTime}
-              onChange={(e) => updateStop(index, 'travelTime', Number(e.target.value))}
+              value={stop.stopOrder}
+              onChange={(e) => updateStop(index, 'stopOrder', Number(e.target.value))}
               className="w-full bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-primary"
-              placeholder="0"
-              min="0"
+              readOnly
             />
             <button
               type="button"
@@ -117,7 +136,14 @@ export const RouteMapper: React.FC<RouteMapperProps> = ({ counters, stops = [], 
   );
 
   const addStop = () => {
-    const newStops = [...stops, { counterId: '', distance: 0, travelTime: 0 }];
+    const newStops = [...stops, { 
+      counterId: '', 
+      distance: 0, 
+      boardingTime: '06:00',
+      arrivalTime: '06:00',
+      departureTime: '06:00',
+      stopOrder: stops.length + 1 
+    }];
     onChange(newStops);
   };
 
