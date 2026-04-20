@@ -34,120 +34,114 @@ export const getTicketHTML = async (
     }
   }
 
-  const formattedDate = trip ? format(new Date(trip.departureTime), 'dd MMM yyyy, hh:mm a') : 'N/A';
+  const formattedDate = trip ? format(new Date(trip.departureTime), 'dd MMM yyyy') : 'N/A';
+  const depTime = trip ? format(new Date(trip.departureTime), 'hh:mm a') : 'N/A';
   const bookingDate = format(new Date(booking.timestamp), 'dd MMM yyyy, hh:mm a');
 
   return `
-    <div style="padding: 40px; border: 2px solid #DEF2F1; border-radius: 24px; margin: 20px; position: relative; overflow: hidden; width: 800px; background-color: #FEFFFF; font-family: 'Jost', sans-serif; color: #17252A;">
-      <!-- Decorative Background Elements -->
-      <div style="position: absolute; top: -50px; right: -50px; width: 200px; height: 200px; background: #DEF2F1; border-radius: 50%; opacity: 0.5;"></div>
-      <div style="position: absolute; bottom: -100px; left: -50px; width: 300px; height: 300px; background: #3AAFA9; border-radius: 50%; opacity: 0.05;"></div>
+    <div style="padding: 0; margin: 0; width: 1000px; height: 400px; background-color: #ffffff; font-family: 'Jost', sans-serif; display: flex; color: #17252A; border-radius: 30px; overflow: hidden; box-shadow: 0 40px 100px rgba(0,0,0,0.1); border: 1px solid #f0f0f0;">
       
-      <!-- Header -->
-      <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px dashed #DEF2F1; padding-bottom: 24px; margin-bottom: 24px; position: relative; z-index: 10;">
-        <div style="display: flex; align-items: center; gap: 16px;">
-          <div style="width: 60px; height: 60px; background: #17252A; border-radius: 16px; display: flex; align-items: center; justify-content: center; color: #FEFFFF; font-weight: 900; font-size: 24px;">SL</div>
-          <div>
-            <h1 style="margin: 0; font-size: 36px; font-weight: 900; color: #17252A; letter-spacing: -1px; text-transform: uppercase;">SwiftLine</h1>
-            <p style="margin: 4px 0 0 0; font-size: 14px; font-weight: 600; color: #3AAFA9; text-transform: uppercase; letter-spacing: 2px;">Premium Travel</p>
-          </div>
-        </div>
-        <div style="text-align: right;">
-          <div style="background: #17252A; color: #FEFFFF; padding: 8px 16px; border-radius: 12px; font-weight: 800; font-size: 14px; display: inline-block; margin-bottom: 8px; letter-spacing: 1px;">E-TICKET</div>
-          <p style="margin: 0; font-size: 12px; font-weight: 600; color: #2B7A78;">ID: <span style="color: #17252A; font-weight: 800;">${booking.id}</span></p>
-          <p style="margin: 4px 0 0 0; font-size: 10px; font-weight: 500; color: #888;">Booked: ${bookingDate}</p>
-        </div>
-      </div>
-
-      <!-- Main Content Grid -->
-      <div style="display: flex; gap: 32px; position: relative; z-index: 10;">
+      <!-- Main Ticket Body -->
+      <div style="flex: 1; padding: 40px; display: flex; flex-direction: column; position: relative;">
         
-        <!-- Left Column: Details -->
-        <div style="flex: 1; display: flex; flex-direction: column; gap: 24px;">
-          
-          <!-- Passenger Info -->
-          <div style="background: #f8fbfb; padding: 20px; border-radius: 16px; border: 1px solid #DEF2F1;">
-            <h3 style="margin: 0 0 16px 0; font-size: 12px; font-weight: 800; color: #3AAFA9; text-transform: uppercase; letter-spacing: 1px;">Passenger Details</h3>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
-              <div>
-                <p style="margin: 0; font-size: 10px; font-weight: 600; color: #888; text-transform: uppercase;">Name</p>
-                <p style="margin: 4px 0 0 0; font-size: 16px; font-weight: 800; color: #17252A;">${passengerData?.name || 'Valued Customer'}</p>
-              </div>
-              <div>
-                <p style="margin: 0; font-size: 10px; font-weight: 600; color: #888; text-transform: uppercase;">Phone</p>
-                <p style="margin: 4px 0 0 0; font-size: 14px; font-weight: 700; color: #17252A;">${passengerData?.phone || 'N/A'}</p>
-              </div>
+        <!-- Header -->
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 40px;">
+          <div style="display: flex; align-items: center; gap: 15px;">
+            <div style="width: 45px; height: 45px; bg-color: #17252A; background: #17252A; border-radius: 12px; display: flex; align-items: center; justify-content: center; color: #white; font-weight: 900; font-size: 20px; color: white;">SL</div>
+            <div style="display: flex; flex-direction: column;">
+              <span style="font-size: 24px; font-weight: 900; letter-spacing: -1px; text-transform: uppercase;">SwiftLine</span>
+              <span style="font-size: 9px; font-weight: 800; color: #3AAFA9; text-transform: uppercase; letter-spacing: 3px;">Premium Fleet</span>
             </div>
           </div>
-
-          <!-- Trip Info -->
-          <div style="background: #f8fbfb; padding: 20px; border-radius: 16px; border: 1px solid #DEF2F1;">
-            <h3 style="margin: 0 0 16px 0; font-size: 12px; font-weight: 800; color: #3AAFA9; text-transform: uppercase; letter-spacing: 1px;">Trip Details</h3>
-            
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
-              <div>
-                <p style="margin: 0; font-size: 10px; font-weight: 600; color: #888; text-transform: uppercase;">Route</p>
-                <p style="margin: 4px 0 0 0; font-size: 14px; font-weight: 800; color: #17252A;">${route?.name || 'N/A'}</p>
-              </div>
-              <div>
-                <p style="margin: 0; font-size: 10px; font-weight: 600; color: #888; text-transform: uppercase;">Departure Time</p>
-                <p style="margin: 4px 0 0 0; font-size: 14px; font-weight: 800; color: #3AAFA9;">${formattedDate}</p>
-              </div>
-            </div>
-
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
-              <div>
-                <p style="margin: 0; font-size: 10px; font-weight: 600; color: #888; text-transform: uppercase;">Boarding Point</p>
-                <p style="margin: 4px 0 0 0; font-size: 13px; font-weight: 700; color: #17252A;">${boarding?.name || 'N/A'}</p>
-              </div>
-              <div>
-                <p style="margin: 0; font-size: 10px; font-weight: 600; color: #888; text-transform: uppercase;">Dropping Point</p>
-                <p style="margin: 4px 0 0 0; font-size: 13px; font-weight: 700; color: #17252A;">${dropping?.name || 'N/A'}</p>
-              </div>
-            </div>
-
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding-top: 16px; border-top: 1px solid #DEF2F1;">
-              <div>
-                <p style="margin: 0; font-size: 10px; font-weight: 600; color: #888; text-transform: uppercase;">Coach No.</p>
-                <p style="margin: 4px 0 0 0; font-size: 14px; font-weight: 800; color: #17252A;">${trip?.coachNumber || 'N/A'}</p>
-              </div>
-              <div>
-                <p style="margin: 0; font-size: 10px; font-weight: 600; color: #888; text-transform: uppercase;">Class</p>
-                <p style="margin: 4px 0 0 0; font-size: 14px; font-weight: 800; color: #17252A;">${bus ? (bus.isAC ? 'AC Premium' : 'Non-AC') : 'N/A'}</p>
-              </div>
-            </div>
+          <div style="text-align: right;">
+            <span style="font-size: 10px; font-weight: 800; color: #3AAFA9; text-transform: uppercase; letter-spacing: 2px;">Boarding Pass</span>
+            <div style="font-size: 32px; font-weight: 900; letter-spacing: -2px; color: #17252A; margin-top: -5px;">E-TICKET</div>
           </div>
-
         </div>
 
-        <!-- Right Column: Seats & QR -->
-        <div style="width: 220px; display: flex; flex-direction: column; gap: 24px;">
+        <!-- Info Grid -->
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 30px; flex: 1;">
           
-          <!-- Seats & Fare -->
-          <div style="background: #17252A; color: #FEFFFF; padding: 24px; border-radius: 16px; text-align: center; box-shadow: 0 10px 25px rgba(23, 37, 42, 0.2);">
-            <p style="margin: 0; font-size: 10px; font-weight: 600; color: #3AAFA9; text-transform: uppercase; letter-spacing: 1px;">Seat(s)</p>
-            <p style="margin: 8px 0 16px 0; font-size: 24px; font-weight: 900; color: #FEFFFF;">${booking.seats.join(', ')}</p>
-            
-            <div style="height: 1px; background: rgba(255,255,255,0.1); margin: 16px 0;"></div>
-            
-            <p style="margin: 0; font-size: 10px; font-weight: 600; color: #3AAFA9; text-transform: uppercase; letter-spacing: 1px;">Total Fare</p>
-            <p style="margin: 8px 0 0 0; font-size: 20px; font-weight: 800; color: #FEFFFF;">৳ ${booking.totalFare.toLocaleString()}</p>
+          <div style="display: flex; flex-direction: column; gap: 5px;">
+             <span style="font-size: 9px; font-weight: 800; color: #888; text-transform: uppercase; letter-spacing: 1px;">Passenger Name</span>
+             <span style="font-size: 16px; font-weight: 800; color: #17252A;">${passengerData?.name || 'Valued Customer'}</span>
           </div>
 
-          <!-- QR Code -->
-          <div style="background: #FEFFFF; padding: 16px; border-radius: 16px; border: 2px solid #DEF2F1; text-align: center; display: flex; flex-direction: column; align-items: center;">
-            ${qrCodeImg ? `<img src="${qrCodeImg}" style="width: 140px; height: 140px; margin-bottom: 12px;" />` : '<div style="width: 140px; height: 140px; background: #eee; margin-bottom: 12px;"></div>'}
-            <p style="margin: 0; font-size: 10px; font-weight: 700; color: #17252A; text-transform: uppercase; letter-spacing: 1px;">Scan to Verify</p>
+          <div style="display: flex; flex-direction: column; gap: 5px;">
+             <span style="font-size: 9px; font-weight: 800; color: #888; text-transform: uppercase; letter-spacing: 1px;">Coach No.</span>
+             <span style="font-size: 16px; font-weight: 800; color: #17252A;">${trip?.coachNumber || 'N/A'}</span>
           </div>
 
+          <div style="display: flex; flex-direction: column; gap: 5px;">
+             <span style="font-size: 9px; font-weight: 800; color: #888; text-transform: uppercase; letter-spacing: 1px;">Seat(s)</span>
+             <span style="font-size: 18px; font-weight: 900; color: #3AAFA9;">${booking.seats.join(', ')}</span>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 5px;">
+             <span style="font-size: 9px; font-weight: 800; color: #888; text-transform: uppercase; letter-spacing: 1px;">Trip Date</span>
+             <span style="font-size: 16px; font-weight: 800; color: #17252A;">${formattedDate}</span>
+          </div>
+
+          <div style="grid-column: span 2; display: flex; flex-direction: column; gap: 5px;">
+             <span style="font-size: 9px; font-weight: 800; color: #888; text-transform: uppercase; letter-spacing: 1px;">From (Origin)</span>
+             <span style="font-size: 15px; font-weight: 800; color: #17252A;">${boarding?.name || 'N/A'}</span>
+          </div>
+
+          <div style="grid-column: span 2; display: flex; flex-direction: column; gap: 5px;">
+             <span style="font-size: 9px; font-weight: 800; color: #888; text-transform: uppercase; letter-spacing: 1px;">To (Destination)</span>
+             <span style="font-size: 15px; font-weight: 800; color: #17252A;">${dropping?.name || 'N/A'}</span>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 5px;">
+             <span style="font-size: 9px; font-weight: 800; color: #888; text-transform: uppercase; letter-spacing: 1px;">Departure</span>
+             <span style="font-size: 16px; font-weight: 800; color: #17252A;">${depTime}</span>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 5px;">
+             <span style="font-size: 9px; font-weight: 800; color: #888; text-transform: uppercase; letter-spacing: 1px;">Reporting Time</span>
+             <span style="font-size: 16px; font-weight: 800; color: #3AAFA9;">${trip ? format(new Date(new Date(trip.departureTime).getTime() - 20 * 60000), 'hh:mm a') : 'N/A'}</span>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 5px;">
+             <span style="font-size: 9px; font-weight: 800; color: #888; text-transform: uppercase; letter-spacing: 1px;">Price Paid</span>
+             <span style="font-size: 18px; font-weight: 900; color: #17252A;">৳ ${booking.totalFare}</span>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 5px;">
+             <span style="font-size: 9px; font-weight: 800; color: #888; text-transform: uppercase; letter-spacing: 1px;">PNR Number</span>
+             <span style="font-size: 16px; font-weight: 800; color: #17252A;">${booking.id}</span>
+          </div>
         </div>
+
+        <!-- Perforation line -->
+        <div style="position: absolute; right: 0; top: 0; bottom: 0; width: 2px; height: 100%; border-right: 2px dashed #f0f0f0;">
+          <div style="position: absolute; top: -15px; left: -14px; width: 30px; height: 30px; background: #FEFFFF; border-radius: 50%;"></div>
+          <div style="position: absolute; bottom: -15px; left: -14px; width: 30px; height: 30px; background: #FEFFFF; border-radius: 50%;"></div>
+        </div>
+
       </div>
 
-      <!-- Footer -->
-      <div style="margin-top: 32px; padding-top: 16px; border-top: 2px dashed #DEF2F1; text-align: center; position: relative; z-index: 10;">
-        <p style="margin: 0; font-size: 10px; font-weight: 600; color: #2B7A78;">Please arrive at the boarding point at least 15 minutes before departure.</p>
-        <p style="margin: 4px 0 0 0; font-size: 9px; font-weight: 500; color: #888;">This is a computer-generated document. No signature is required.</p>
+      <!-- Tear-off Section (Stub) -->
+      <div style="width: 250px; background-color: #fcfcfc; padding: 40px; display: flex; flex-direction: column; align-items: center; justify-content: space-between; border-left: 1px solid #f0f0f0;">
+        
+        <div style="text-align: center; width: 100%;">
+          <span style="font-size: 10px; font-weight: 800; color: #ccc; text-transform: uppercase; letter-spacing: 4px; display: block; margin-bottom: 20px;">Verification</span>
+          <div style="background: white; padding: 10px; border-radius: 20px; border: 1px solid #f0f0f0; margin-bottom: 20px;">
+            ${qrCodeImg ? `<img src="${qrCodeImg}" style="width: 140px; height: 140px;" />` : '<div style="width: 140px; height: 140px; background: #eee;"></div>'}
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <span style="font-size: 18px; font-weight: 900; color: #17252A;">${booking.seats.join(', ')}</span>
+            <span style="font-size: 9px; font-weight: 800; color: #3AAFA9; text-transform: uppercase; letter-spacing: 1px;">Seat ID</span>
+          </div>
+        </div>
+
+        <div style="text-align: center;">
+          <span style="font-size: 10px; font-weight: 800; color: #17252A; text-transform: uppercase; letter-spacing: 1px;">${booking.id}</span>
+          <p style="font-size: 8px; color: #999; margin: 5px 0 0 0;">Scan to check-in</p>
+        </div>
+
       </div>
+
     </div>
   `;
 };

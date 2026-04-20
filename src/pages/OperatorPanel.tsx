@@ -690,6 +690,7 @@ export const OperatorPanel = () => {
               <div className="grid md:grid-cols-2 gap-8">
                 <SeatMap
                   capacity={buses.find(b => b.id === selectedTrip.busId)?.capacity || 40}
+                  layout={buses.find(b => b.id === selectedTrip.busId)?.layout || '2+2'}
                   bookedSeats={bookings.filter(b => b.status === 'booked').flatMap(b => b.seats)}
                   femaleBookedSeats={bookings.filter(b => b.status === 'booked').filter(b => {
                     const p = passengers.find(pass => pass.id === b.passengerId);

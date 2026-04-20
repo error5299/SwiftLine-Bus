@@ -10,6 +10,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { RealTimeClock } from './RealTimeClock';
 
 import { useAuth } from '../context/FirebaseProvider';
+import { cn } from '../lib/utils';
 
 export const Header: React.FC = () => {
   const { t } = useLanguage();
@@ -29,9 +30,9 @@ export const Header: React.FC = () => {
 
   const navItems = [
     { path: '/', label: 'Home', icon: Search },
-    { path: '/about', label: 'About Us', icon: Info },
-    { path: '/track-ticket', label: 'Track Ticket', icon: Ticket },
-    { path: '/contact', label: 'Contact', icon: Phone },
+    { path: '/about', label: 'Fleet', icon: Info },
+    { path: '/track-journey', label: 'Journey Hub', icon: Navigation },
+    { path: '/contact', label: 'Support', icon: Phone },
   ];
 
   const handleNavClick = (path: string) => {
@@ -40,98 +41,99 @@ export const Header: React.FC = () => {
   };
 
   return (
-    <header className={`sticky top-0 z-50 transition-all duration-500 flex flex-col ${scrolled ? 'glass-hard shadow-lg' : 'bg-white/95 backdrop-blur-md border-b border-slate-100'}`}>
-      <div className="h-20 flex items-center w-full">
-        <div className="max-w-7xl mx-auto px-6 w-full flex justify-between items-center">
-        {/* Brand Logo */}
-        <div className="flex items-center gap-4">
+    <header 
+      className={cn(
+        "sticky top-0 z-[60] transition-all duration-500",
+        scrolled 
+          ? "py-2" 
+          : "py-6"
+      )}
+    >
+      <div className={cn(
+        "max-w-7xl mx-auto px-4 sm:px-6 transition-all duration-500",
+        scrolled ? "max-w-[98%]" : "max-w-7xl"
+      )}>
+        <div className={cn(
+          "relative flex items-center justify-between px-8 h-20 transition-all duration-500 rounded-[2.5rem] border overflow-hidden",
+          scrolled 
+            ? "bg-white/95 backdrop-blur-3xl shadow-[0_20px_50px_rgba(0,0,0,0.08)] border-white/50" 
+            : "bg-white border-slate-100 shadow-sm"
+        )}>
+          {/* Brand Logo */}
           <Link 
             to="/"
-            className="flex items-center gap-2 cursor-pointer group" 
+            className="flex items-center gap-3 group relative z-10" 
           >
-            <div className="group-hover:scale-110 transition-transform">
-              <img src="https://www.belayet.pro.bd/wp-content/uploads/2026/03/SL-Logo.png" alt="SwiftLine Logo" className="w-40 h-40 object-contain" referrerPolicy="no-referrer" />
+            <div className="relative w-12 h-12 flex items-center justify-center overflow-hidden">
+               <img src="https://www.belayet.pro.bd/wp-content/uploads/2026/03/SwiftLine.png" alt="SwiftLine Logo" className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-500" />
             </div>
-
+            <div className="flex flex-col -space-y-0.5">
+              <span className="text-2xl font-bold tracking-tighter text-primary">SwiftLine</span>
+              <span className="text-[9px] font-black uppercase tracking-[0.1em] text-accent">Premium Fleet</span>
+            </div>
           </Link>
-          
-          <div className="hidden sm:block">
-            <RealTimeClock />
-          </div>
-        </div>
 
-        {/* Navigation Menu (Center) - Desktop */}
-        <nav className="hidden lg:flex items-center gap-1 bg-slate-100/50 p-1 rounded-2xl">
-          {navItems.map((item) => (
-            <Link
-              key={item.path}
-              to={item.path}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${
-                location.pathname === item.path 
-                  ? 'bg-white text-primary shadow-sm' 
-                  : 'text-slate-500 hover:text-primary hover:bg-white/50'
-              }`}
-            >
-              <item.icon size={16} />
-              <span>{item.label}</span>
-            </Link>
-          ))}
-        </nav>
-
-        {/* Utility Actions (Right) */}
-        <div className="flex items-center gap-4">
-          <div className="sm:hidden">
-            <RealTimeClock />
-          </div>
-          
-          <div className="hidden lg:flex items-center gap-3">
-            {user ? (
-              <>
-                {role && role !== 'passenger' && (
-                  <Link 
-                    to={role === 'admin' ? '/admin' : role === 'operator' ? '/operator' : '/supervisor'}
-                    className="flex items-center gap-2 bg-primary/10 px-4 py-2 rounded-xl text-sm font-bold text-primary hover:bg-primary/20 transition-colors"
-                  >
-                    <Shield size={18} />
-                    <span className="hidden md:inline">Dashboard</span>
-                  </Link>
+          {/* Desktop Nav */}
+          <nav className="hidden lg:flex items-center gap-1 bg-slate-50 p-1.5 rounded-full border border-slate-100">
+            {navItems.map((item) => (
+              <Link
+                key={item.path}
+                to={item.path}
+                className={cn(
+                  "relative flex items-center gap-2 px-5 py-3 rounded-full text-[11px] font-black transition-all uppercase tracking-[0.2em] group",
+                  location.pathname === item.path 
+                    ? 'bg-white text-accent shadow-sm' 
+                    : 'text-slate-500 hover:text-primary'
                 )}
+              >
+                <item.icon size={14} />
+                <span>{item.label}</span>
+              </Link>
+            ))}
+          </nav>
+
+          {/* Right Actions */}
+          <div className="flex items-center gap-3">
+             <div className="hidden sm:flex items-center gap-2 px-4 py-2 bg-slate-50 rounded-full border border-slate-100">
+               <span className="text-[10px] font-black text-slate-400">Time:</span>
+               <RealTimeClock />
+             </div>
+
+            {user ? (
+              <div className="flex items-center gap-2">
                 <Link 
                   to="/profile"
-                  className="flex items-center gap-2 bg-slate-100 px-4 py-2 rounded-xl text-sm font-bold text-primary hover:bg-slate-200 transition-colors"
+                  className="flex items-center gap-2 p-1.5 pr-4 bg-primary text-white rounded-full hover:bg-accent transition-all group"
                 >
-                  <User size={18} />
-                  <span className="hidden md:inline">{user.displayName || 'My Profile'}</span>
+                  <div className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center text-[10px] font-black overflow-hidden border border-white/20">
+                    {user.photoURL ? <img src={user.photoURL} alt="" /> : <User size={16} />}
+                  </div>
+                  <span className="text-xs font-black truncate max-w-[80px]">{user.displayName?.split(' ')?.[0] || 'User'}</span>
                 </Link>
-                <button 
-                  onClick={() => signOut(auth).then(() => navigate('/'))} 
-                  className="p-2 text-slate-400 hover:text-red-500 transition-colors"
-                  title="Logout"
-                >
-                  <LogOut size={20} />
+                <button onClick={() => signOut(auth).then(() => navigate('/'))} className="p-3 text-slate-400 hover:text-red-500 transition-colors">
+                  <LogOut size={18} />
                 </button>
-              </>
+              </div>
             ) : (
               <Link 
                 to="/login"
-                className="btn-primary !py-2 !px-5 flex items-center gap-2 text-sm"
+                className="flex items-center gap-2 px-6 py-3 bg-primary text-white rounded-full text-[11px] font-black uppercase tracking-[0.2em] hover:bg-accent transition-all shadow-md hover:shadow-lg hover:-translate-y-0.5"
               >
-                <User size={18} />
+                <User size={14} />
                 <span>Login</span>
               </Link>
             )}
-          </div>
 
-          {/* Mobile Menu Button */}
-          <button 
-            className="lg:hidden p-2 text-primary hover:bg-slate-100 rounded-xl transition-colors"
-            onClick={() => setIsMenuOpen(!isMenuOpen)}
-          >
-            {isMenuOpen ? <X size={24} /> : <Menu size={24} />}
-          </button>
+            {/* Mobile Toggle */}
+            <button 
+              className="lg:hidden p-3 bg-slate-50 text-primary rounded-2xl border border-slate-100 active:scale-90 transition-transform"
+              onClick={() => setIsMenuOpen(!isMenuOpen)}
+            >
+              {isMenuOpen ? <X size={20} /> : <Menu size={20} />}
+            </button>
+          </div>
         </div>
       </div>
-    </div>
 
       {/* Mobile Navigation Menu */}
       <AnimatePresence>

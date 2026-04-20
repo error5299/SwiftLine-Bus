@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useLanguage } from '../hooks/useLanguage';
 import { motion, AnimatePresence } from 'motion/react';
-import { User, Mail, Phone, History as HistoryIcon, Ticket, Download, LogOut, Shield, MapPin, Bus as BusIcon, ChevronRight, Printer, XCircle, Info, Calendar, Clock, CreditCard, Edit2 } from 'lucide-react';
+import { User, Mail, Phone, History as HistoryIcon, Ticket, Download, LogOut, Shield, MapPin, Bus as BusIcon, ChevronRight, Printer, XCircle, Info, Calendar, Clock, CreditCard, Edit2, Map as MapIcon, Navigation, Star } from 'lucide-react';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, query, where, getDocs, doc, getDoc, onSnapshot, updateDoc, deleteDoc, addDoc, serverTimestamp } from 'firebase/firestore';
 import { Booking, Trip, Route, Passenger, Counter, Bus } from '../types';
@@ -10,6 +11,7 @@ import { generateTicketPDF, printTicketHTML } from '../utils/ticketGenerator';
 
 export const Profile: React.FC = () => {
   const { t } = useLanguage();
+  const navigate = useNavigate();
   const [user, setUser] = useState<any>(null);
   const [passenger, setPassenger] = useState<Passenger | null>(null);
   const [bookings, setBookings] = useState<Booking[]>([]);
@@ -313,6 +315,28 @@ export const Profile: React.FC = () => {
               <HistoryIcon className="text-accent" />
               Booking History
             </h3>
+          </div>
+
+          {/* Quick Actions */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+             {[
+               { icon: MapIcon, title: "Explore Maps", desc: "View all routes visually", path: '/about' },
+               { icon: Ticket, title: "My Tickets", desc: "Manage your bookings", path: '/tickets' },
+               { icon: Navigation, title: "Journey Tracker", desc: "Live bus & trip status", path: '/track-journey' },
+               { icon: Star, title: "Earn Rewards", desc: "Earn points/trips", path: '/profile' }
+             ].map((action, i) => (
+                <button 
+                  key={i} 
+                  onClick={() => action.path && navigate(action.path)}
+                  className="text-left bg-white p-4 rounded-2xl border border-slate-100 shadow-sm hover:shadow-md transition-all space-y-2"
+                >
+                  <action.icon className="text-accent" size={20} />
+                  <div>
+                    <h4 className="font-black text-primary text-xs">{action.title}</h4>
+                    <p className="text-[10px] text-slate-400 font-bold">{action.desc}</p>
+                  </div>
+                </button>
+             ))}
           </div>
 
           <div className="space-y-6">

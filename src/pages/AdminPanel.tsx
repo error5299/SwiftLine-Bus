@@ -10,7 +10,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { Counter, Operator, Route, Bus, Crew, Passenger, WalletTransaction, Trip, RouteStop, TripCounterTime, Booking, TripTemplate } from '../types';
 import { useLanguage } from '../hooks/useLanguage';
 import { useFirebaseData, useAuth } from '../context/FirebaseProvider';
-import { Plus, Edit2, Trash2, Wallet, Map, Bus as BusIcon, Users, UserCheck, ShieldCheck, Search, X, LogIn, Navigation, LayoutDashboard, TrendingUp, Activity, Clock, LogOut, Globe, Printer, Map as MapIcon, Star, Filter, ChevronRight, Wifi, Coffee, Zap, Info, MapPin, History as HistoryIcon, AlertCircle, Shield, User, ChevronLeft, Power, Eye, Lock } from 'lucide-react';
+import { Plus, Edit2, Trash2, Wallet, Bus as BusIcon, Users, UserCheck, ShieldCheck, Search, X, LogIn, Navigation, LayoutDashboard, TrendingUp, Activity, Clock, LogOut, Globe, Printer, Map as MapIcon, Star, Filter, ChevronRight, Wifi, Coffee, Zap, Info, MapPin, History as HistoryIcon, AlertCircle, Shield, User, ChevronLeft, Power, Eye, Lock } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Login } from '../components/Login';
 import { RouteMapper } from '../components/RouteMapper';
@@ -1140,7 +1140,7 @@ export const AdminPanel = () => {
               { id: 'routeManager', label: 'Route Builder', icon: MapIcon },
               { id: 'tripCenter', label: 'Service Hub', icon: Zap },
               { id: 'counters', label: 'Counters', icon: Wallet },
-              { id: 'trips', label: 'Active Trips', icon: Map },
+              { id: 'trips', label: 'Active Trips', icon: MapIcon },
               { id: 'tripHistory', label: 'Archives', icon: Clock },
               { id: 'fleet', label: 'Fleet Ops', icon: BusIcon },
               { id: 'tracking', label: 'Live Map', icon: MapPin },
@@ -1502,7 +1502,7 @@ export const AdminPanel = () => {
                       </button>
                       <div className="grid grid-cols-2 gap-3 mt-4 pt-4 border-t border-slate-50">
                         <button onClick={() => setActiveTab('trips')} className="p-4 bg-slate-50 rounded-2xl hover:bg-primary hover:text-white transition-all group text-center">
-                          <Map className="text-primary group-hover:text-white mx-auto mb-2" size={20} />
+                          <MapIcon className="text-primary group-hover:text-white mx-auto mb-2" size={20} />
                           <p className="text-[10px] font-black uppercase tracking-widest">New Trip</p>
                         </button>
                         <button onClick={() => setActiveTab('fleet')} className="p-4 bg-slate-50 rounded-2xl hover:bg-primary hover:text-white transition-all group text-center">
